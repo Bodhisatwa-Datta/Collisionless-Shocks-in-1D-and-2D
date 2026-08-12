@@ -116,6 +116,20 @@ Open and absorbing electromagnetic boundaries are deliberately rejected by
 `solver_1D3V` until a field-absorbing boundary and consistent particle
 injection scheme have their own validation tests.
 
+### Validated periodic 2D2V path
+
+The two-dimensional electromagnetic solver implements the periodic TMz system
+with `Ex`, `Ey`, and `Bz` on a Yee grid. Run its quiet-plasma example with:
+
+```bash
+python runs/periodic_2d2v.py
+```
+
+This path uses fixed-density macro-particle weights, a stable centered Maxwell
+update, a relativistic 2D2V Boris pusher, a periodic Gauss-law solve, and a
+current projection that preserves the discrete continuity equation. Open and
+absorbing 2D electromagnetic boundaries are not yet supported.
+
 ---
 
 ## Diagnostics and Visualizations

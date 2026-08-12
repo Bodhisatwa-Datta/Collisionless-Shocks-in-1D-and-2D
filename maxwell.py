@@ -346,6 +346,10 @@ def calc_B_1D3V(grid: Grid1D3V, dt, bc):
 
 
 def calc_curr_dens_2D(grid: Grid1D3V, electrons: Particles, ions: Particles):
+    raise RuntimeError(
+        "Legacy 2D current deposition is disabled; use "
+        "calc_charge_conserving_current_2D"
+    )
     # Current density via CIC for both velocity components
     grid.J.fill(0)
     # TODO: We're assuming periodic BC here, take into account params.bc!
@@ -380,6 +384,9 @@ def calc_curr_dens_2D(grid: Grid1D3V, electrons: Particles, ions: Particles):
 
 
 def calc_E_2D(grid: Grid2D, dt, bc):
+    raise RuntimeError(
+        "Legacy split 2D field update is disabled; use calc_fields_2D"
+    )
     """
     Maxwell's equations for 2D become:
 
@@ -406,6 +413,9 @@ def calc_E_2D(grid: Grid2D, dt, bc):
 
 
 def calc_B_2D(grid: Grid2D, dt, bc):
+    raise RuntimeError(
+        "Legacy split 2D field update is disabled; use calc_fields_2D"
+    )
     """
     dB_z/dt = dE_x/dy - dE_y/dx\n
     """
@@ -431,3 +441,130 @@ def calc_B_2D(grid: Grid2D, dt, bc):
         grid.B[-1, :-1, 0] = 3 * grid.B[-2, :-1, 0] - 3 * grid.B[-3, :-1, 0] + grid.B[-4, :-1, 0]
         grid.B[:-1, -1, 0] = 3 * grid.B[:-1, -2, 0] - 3 * grid.B[:-1, -3, 0] + grid.B[:-1, -4, 0]
         grid.B[-1, -1, 0] = 3 * grid.B[-1, -2, 0] - 3 * grid.B[-1, -3, 0] + grid.B[-1, -4, 0]  # last value is an interpolation of an interpolation
+
+
+# Validated periodic 2D2V TMz path. The legacy calc_E_2D/calc_B_2D routines
+# above are retained only for historical comparison and are not used by the
+# repaired solver.
+def calc_fields_2D(grid: Grid2D, dt):
+    """Stable periodic TMz Maxwell update on a 2D Yee grid."""
+    half_dt = 0.5 * dt
+    bz = grid.B[:, :, 0]
+
+    bz += half_dt * (
+        (np.roll(grid.E[:, :, 0], -1, axis=1) - grid.E[:, :, 0]) / grid.dx
+        - (np.roll(grid.E[:, :, 1], -1, axis=0) - grid.E[:, :, 1]) / grid.dx
+    )
+    grid.E[:, :, 0] += dt * (
+        -grid.J[:, :, 0] / eps_0
+        + c * c * (bz - np.roll(bz, 1, axis=1)) / grid.dx
+    )
+    grid.E[:, :, 1] += dt * (
+        -grid.J[:, :, 1] / eps_0
+        - c * c * (bz - np.roll(bz, 1, axis=0)) / grid.dx
+    )
+    bz += half_dt * (
+        (np.roll(grid.E[:, :, 0], -1, axis=1) - grid.E[:, :, 0]) / grid.dx
+        - (np.roll(grid.E[:, :, 1], -1, axis=0) - grid.E[:, :, 1]) / grid.dx
+    )
+
+
+def calc_gauss_residual_2D(grid: Grid2D):
+    divergence = (
+        (grid.E[:, :, 0] - np.roll(grid.E[:, :, 0], 1, axis=0)) / grid.dx
+        + (grid.E[:, :, 1] - np.roll(grid.E[:, :, 1], 1, axis=1)) / grid.dx
+    )
+    return divergence - grid.rho / eps_0
+
+
+def initialize_electric_field_2D(grid: Grid2D):
+    """Solve periodic discrete Gauss law for the minimum-energy E field."""
+    net_charge = grid.dx * grid.dx * np.sum(grid.rho)
+    scale = grid.dx * grid.dx * np.sum(np.abs(grid.rho))
+    if abs(net_charge) > 1e-12 * max(1.0, scale):
+        raise ValueError("A periodic 2D domain must be charge neutral")
+
+    rho_hat = np.fft.fft2(grid.rho)
+    modes = 2 * np.pi * np.fft.fftfreq(grid.n_cells, d=grid.dx)
+    symbol = 2 * np.sin(0.5 * modes * grid.dx) / grid.dx
+    sx = symbol[:, np.newaxis]
+    sy = symbol[np.newaxis, :]
+    denom = sx * sx + sy * sy
+    potential_hat = np.zeros_like(rho_hat, dtype=complex)
+    mask = denom > 0
+    potential_hat[mask] = rho_hat[mask] / (eps_0 * denom[mask])
+    phase_x = np.exp(0.5j * modes * grid.dx)[:, np.newaxis]
+    phase_y = np.exp(0.5j * modes * grid.dx)[np.newaxis, :]
+    grid.E[:, :, 0] = np.fft.ifft2(-1j * sx * phase_x * potential_hat).real
+    grid.E[:, :, 1] = np.fft.ifft2(-1j * sy * phase_y * potential_hat).real
+    grid.gauss_residual[:] = calc_gauss_residual_2D(grid)
+
+
+def _deposit_midpoint_current_component_2D(grid, target, particles, midpoint, component, offset):
+    scaled = midpoint / grid.dx - np.asarray(offset)
+    idx = np.floor(scaled).astype(np.int32)
+    weight = scaled - idx
+    ix = idx[:, 0] % grid.n_cells
+    iy = idx[:, 1] % grid.n_cells
+    wx = weight[:, 0]
+    wy = weight[:, 1]
+    value = particles.q * particles.weight / (grid.dx * grid.dx) * particles.v[:, component]
+    np.add.at(target, (ix, iy), value * (1 - wx) * (1 - wy))
+    np.add.at(target, ((ix + 1) % grid.n_cells, iy), value * wx * (1 - wy))
+    np.add.at(target, (ix, (iy + 1) % grid.n_cells), value * (1 - wx) * wy)
+    np.add.at(
+        target,
+        ((ix + 1) % grid.n_cells, (iy + 1) % grid.n_cells),
+        value * wx * wy,
+    )
+
+
+def calc_charge_conserving_current_2D(
+    grid: Grid2D,
+    electrons: Particles,
+    ions: Particles,
+    electron_x_old,
+    ion_x_old,
+    rho_old,
+    dt,
+):
+    """Deposit midpoint current and project it onto discrete continuity.
+
+    The spectral correction changes only the curl-free part of J and enforces
+    (rho_new-rho_old)/dt + div(J) = 0 to roundoff on the periodic Yee grid.
+    """
+    grid.J.fill(0)
+    for particles, old_position in ((electrons, electron_x_old), (ions, ion_x_old)):
+        displacement = (
+            particles.x - old_position + 0.5 * grid.x_max
+        ) % grid.x_max - 0.5 * grid.x_max
+        midpoint = (old_position + 0.5 * displacement) % grid.x_max
+        _deposit_midpoint_current_component_2D(
+            grid, grid.J[:, :, 0], particles, midpoint, 0, (0.5, 0.0)
+        )
+        _deposit_midpoint_current_component_2D(
+            grid, grid.J[:, :, 1], particles, midpoint, 1, (0.0, 0.5)
+        )
+
+    delta_rho = grid.rho - rho_old
+    residual = delta_rho / dt + (
+        (grid.J[:, :, 0] - np.roll(grid.J[:, :, 0], 1, axis=0)) / grid.dx
+        + (grid.J[:, :, 1] - np.roll(grid.J[:, :, 1], 1, axis=1)) / grid.dx
+    )
+    residual_hat = np.fft.fft2(residual)
+    modes = 2 * np.pi * np.fft.fftfreq(grid.n_cells, d=grid.dx)
+    symbol = 2 * np.sin(0.5 * modes * grid.dx) / grid.dx
+    sx = symbol[:, np.newaxis]
+    sy = symbol[np.newaxis, :]
+    denom = sx * sx + sy * sy
+    potential_hat = np.zeros_like(residual_hat, dtype=complex)
+    mask = denom > 0
+    potential_hat[mask] = residual_hat[mask] / denom[mask]
+    phase_x = np.exp(0.5j * modes * grid.dx)[:, np.newaxis]
+    phase_y = np.exp(0.5j * modes * grid.dx)[np.newaxis, :]
+    grid.J[:, :, 0] += np.fft.ifft2(1j * sx * phase_x * potential_hat).real
+    grid.J[:, :, 1] += np.fft.ifft2(1j * sy * phase_y * potential_hat).real
+    grid.continuity_residual[:] = delta_rho / dt + (
+        (grid.J[:, :, 0] - np.roll(grid.J[:, :, 0], 1, axis=0)) / grid.dx
+        + (grid.J[:, :, 1] - np.roll(grid.J[:, :, 1], 1, axis=1)) / grid.dx
+    )
