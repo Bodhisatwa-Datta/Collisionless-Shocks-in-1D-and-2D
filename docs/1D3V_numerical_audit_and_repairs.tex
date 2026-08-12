@@ -1,0 +1,650 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black,
+  pdftitle={Numerical Audit and Repair of the 1D3V Electromagnetic PIC Solver}
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{green!40!black},
+  showstringspaces=false
+}
+
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\epsz}{\varepsilon_0}
+\newcommand{\mucz}{\mu_0}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Numerical Audit and Repair of the\\
+1D3V Electromagnetic Particle-in-Cell Solver}
+\author{Collisionless-Shocks-in-1D-and-2D codebase\\
+Technical diagnostic and implementation report}
+\date{12 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report documents a numerical and software audit of a one-dimensional,
+three-velocity-component electromagnetic particle-in-cell (PIC) solver.  The
+original electrostatic 1D1V solver was stable, whereas the electromagnetic
+extension exhibited exponential growth of the transverse components
+$E_y,E_z,B_y,$ and $B_z$, eventually contaminating the longitudinal field.
+The audit identified a decisive source-free instability in the temporal
+composition of the Maxwell update.  Additional independent defects were found
+in the relativistic Boris pusher, interpolation of the spatially staggered
+magnetic field, current deposition, Gauss-law initialization, macro-particle
+normalization, boundary handling, and energy diagnostics.
+
+The repaired periodic 1D3V path uses a stable time-centered Maxwell update,
+scalar relativistic Lorentz factors, correct staggered interpolation,
+fixed-density macro-particle weights, a longitudinal current satisfying the
+discrete continuity equation, an initial periodic Gauss solve, constraint
+diagnostics, and relativistic kinetic energy.  Seven regression tests pass.
+An end-to-end resolved plasma-oscillation run measured
+$\omega_{pe}=0.9967$ for the normalized target $\omega_{pe}=1$, preserved
+Gauss's law to $7.36\times10^{-15}$, preserved continuity to
+$1.47\times10^{-11}$, and exhibited a maximum relative total-energy drift of
+approximately $3.1\times10^{-3}$ over the test interval.  The validated path
+is periodic.  Open or absorbing electromagnetic shock boundaries remain
+explicitly unsupported pending a separately verified field absorber and
+particle injection scheme.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Purpose and scope}
+
+The purpose of this work was to answer the following question using the actual
+implementation rather than a generic PIC stability argument:
+
+\begin{quote}
+Why did the transverse electromagnetic field components grow exponentially,
+and what minimum set of changes is required to distinguish a software defect
+from an unstable discretization or under-resolved plasma physics?
+\end{quote}
+
+The audit covered the active 1D3V timestep, spatial and temporal staggering,
+the Maxwell equations, charge and current deposition, field interpolation,
+the relativistic Boris pusher, boundary conditions, energy accounting,
+Gauss's law, discrete charge continuity, normalized plasma scales, and minimal
+benchmark problems.  The repaired code intentionally validates the periodic
+1D3V configuration first.  It does not claim that the existing open-boundary
+shock setup is ready for physical production runs.
+
+\section{Code structure}
+
+The principal files are summarized in Table~\ref{tab:files}.
+
+\begin{longtable}{p{0.27\textwidth}p{0.66\textwidth}}
+\caption{Main files in the 1D3V implementation.}\label{tab:files}\\
+\toprule
+File & Responsibility \\
+\midrule
+\endfirsthead
+\toprule
+File & Responsibility \\
+\midrule
+\endhead
+\path{solver_1D3V.py} & Initialization and main electromagnetic PIC timestep. \\
+\path{grids.py} & Grid allocation, particle-to-grid density deposition, and CIC interpolation indices and weights. \\
+\path{maxwell.py} & Current deposition, Gauss initialization and residual, continuity-preserving current construction, and Maxwell updates. \\
+\path{newton.py} & Particle drift and relativistic Boris momentum update. \\
+\path{particles.py} & Particle state, charge-to-mass ratio, macro-particle weight, velocity--momentum conversion, and kinetic energy. \\
+\path{boundary_conditions.py} & Particle boundary operations. \\
+\path{time_constraint.py} & Electromagnetic CFL and plasma-frequency timestep estimates. \\
+\path{results.py} & Field, particle, energy, charge, continuity, and Gauss diagnostics. \\
+\path{runs/periodic_1d3v.py} & Resolved periodic end-to-end example. \\
+\path{tests/test_1d3v_core.py} & Seven numerical regression tests. \\
+\bottomrule
+\end{longtable}
+
+\section{Governing one-dimensional Maxwell system}
+
+In 1D3V all fields have three components, but all spatial derivatives are in
+$x$.  The continuous equations used by the code are
+\begin{align}
+  \frac{\partial E_x}{\partial t} &= -\frac{J_x}{\epsz}, \\
+  \frac{\partial E_y}{\partial t} &= -\frac{J_y}{\epsz}
+      -c^2\frac{\partial B_z}{\partial x}, \\
+  \frac{\partial E_z}{\partial t} &= -\frac{J_z}{\epsz}
+      +c^2\frac{\partial B_y}{\partial x}, \\
+  \frac{\partial B_x}{\partial t} &= 0, \\
+  \frac{\partial B_y}{\partial t} &= \frac{\partial E_z}{\partial x}, \\
+  \frac{\partial B_z}{\partial t} &= -\frac{\partial E_y}{\partial x}.
+\end{align}
+The signs in the active periodic implementation were correct.  The transverse
+instability arose from the temporal update order, not from a sign reversal in
+Faraday's or Amp\`ere--Maxwell's law.
+
+The spatial Yee pairing places transverse electric samples at integer grid
+locations and transverse magnetic samples half a cell away.  The corresponding
+periodic differences are
+\begin{align}
+  (D_- B)_i &= \frac{B_i-B_{i-1}}{\Delta x}, \\
+  (D_+ E)_i &= \frac{E_{i+1}-E_i}{\Delta x}.
+\end{align}
+These operators are the correct adjoint pair on a periodic grid.
+
+\section{Original timestep and staggering}
+
+At the beginning of an original loop iteration the intended particle state was
+$x_p^n$ and $v_p^{n+1/2}$.  The code then performed the following operations:
+\begin{enumerate}
+  \item deposit a current at $x_p^n$;
+  \item drift particles to $x_p^{n+1}$;
+  \item apply particle boundary conditions;
+  \item deposit density and another current at $x_p^{n+1}$;
+  \item average the two endpoint currents as an approximation to
+        $J^{n+1/2}$;
+  \item advance all components of $E$ and $B$;
+  \item Boris-push momentum from the old to the new particle half-step.
+\end{enumerate}
+
+The endpoint average is formally centered for smooth trajectories that remain
+inside one cell, but it does not enforce the discrete continuity equation when
+a particle changes its CIC support.  Consequently it cannot guarantee that an
+initially satisfied Gauss constraint remains satisfied under the longitudinal
+Amp\`ere update.
+
+\section{Confirmed source-free Maxwell instability}
+\label{sec:maxwell-instability}
+
+\subsection{Original temporal composition}
+
+The original routine divided a timestep into two nominal half-steps but used
+old and partially updated fields in a non-symplectic order.  For one transverse
+polarization, write the semi-discrete vacuum equations as
+\begin{equation}
+  \dot E=aB,\qquad \dot B=bE,
+\end{equation}
+where $a=-c^2D_-$ and $b=-D_+$.  For a Fourier mode,
+$ab=-\Omega_k^2$, with
+\begin{equation}
+  \Omega_k = \frac{2c}{\Delta x}
+  \sin\left(\frac{k\Delta x}{2}\right).
+\end{equation}
+Let $h=\Delta t/2$.  The original source-free sequence was equivalent to
+\begin{align}
+  E^* &= E^n+h aB^n,\\
+  B^{n+1/2} &= B^n+h bE^n,\\
+  B^{n+1} &= B^{n+1/2}+h bE^*,\\
+  E^{n+1} &= E^*+h aB^{n+1/2}.
+\end{align}
+Therefore
+\begin{equation}
+\begin{bmatrix}E^{n+1}\\B^{n+1}\end{bmatrix}
+=
+\begin{bmatrix}
+1+h^2ab & 2ha\\
+2hb & 1+h^2ba
+\end{bmatrix}
+\begin{bmatrix}E^n\\B^n\end{bmatrix}.
+\end{equation}
+Defining $s=h^2\Omega_k^2>0$, the eigenvalue magnitude is
+\begin{equation}
+  |\lambda_k|=1+s>1\qquad(k\ne0).
+\end{equation}
+Thus every nonzero vacuum mode grows.  Reducing $\Delta t$ reduces the growth
+per step but does not change its sign.  PIC shot noise supplies broadband
+transverse seeds, and the grid-scale modes grow fastest.  Disabling magnetic
+evolution removes the $E\leftrightarrow B$ feedback loop, explaining the
+observed suppression of transverse growth when $B$ was held fixed.
+
+\subsection{Direct reproduction}
+
+For $N_x=200$, $\Delta x=0.005$, $\Delta t=0.00025$,
+$c\Delta t/\Delta x=0.05$, zero current, and a mode-50 transverse electric
+perturbation, the original field energy evolved as shown in
+Table~\ref{tab:old-energy}.
+
+\begin{table}[h]
+\centering
+\caption{Source-free energy growth under the original update.}
+\label{tab:old-energy}
+\begin{tabular}{rr}
+\toprule
+Step & Field energy \\
+\midrule
+0 & 0.250000 \\
+1 & 0.250625 \\
+100 & 0.320956 \\
+500 & 0.871905 \\
+1000 & 3.040872 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This test contains no particles, no current deposition, no Debye length, and
+no physical plasma instability.  It proves that the Maxwell update alone was
+sufficient to generate the reported behavior.
+
+\section{Maxwell repair}
+
+The repaired routine in \path{maxwell.py} uses a centered
+$B/2\rightarrow E\rightarrow B/2$ composition:
+\begin{align}
+  B^{n+1/2} &= B^n + \frac{\Delta t}{2}F(E^n),\\
+  E^{n+1} &= E^n + \Delta t\left[G(B^{n+1/2})
+               -\frac{J^{n+1/2}}{\epsz}\right],\\
+  B^{n+1} &= B^{n+1/2}+\frac{\Delta t}{2}F(E^{n+1}),
+\end{align}
+where $F$ represents Faraday's curl and $G$ represents the magnetic part of
+Amp\`ere--Maxwell's law.  This is the velocity-Verlet form of the spatially
+staggered wave system.  It has bounded source-free solutions under the 1D CFL
+condition
+\begin{equation}
+  \frac{c\Delta t}{\Delta x}\leq 1.
+\end{equation}
+
+Using the same mode-50 test for 2000 steps, the repaired field energy remained
+between $0.2496875001$ and $0.2499999999$.  The small oscillation is bounded
+time-discretization error rather than exponential energy injection.
+
+\section{Relativistic Boris pusher defects and repair}
+
+\subsection{Original defects}
+
+The particle momentum is $\mathbf{u}=\gamma\mathbf{v}$.  The original code
+computed
+\begin{equation}
+  \gamma^{-1}_{p,j}=\frac{1}{\sqrt{1+u_{p,j}^2}},
+\end{equation}
+separately for each Cartesian component.  Relativistic gamma is instead a
+single scalar for each particle, determined by the norm of its momentum:
+\begin{equation}
+  \gamma_p=\sqrt{1+\frac{|\mathbf{u}_p|^2}{c^2}}.
+\end{equation}
+The old implementation also used the gamma computed before magnetic rotation
+and before the second electric impulse to convert the final momentum back to
+velocity.  The initialization method \code{v\_to\_u} contained the analogous
+componentwise error.
+
+Because the algebraic Boris rotation preserves $|\mathbf{u}|$ for a fixed
+rotation vector, the internal momentum norm could look correct while the
+reported velocity, trajectory, current, gyrofrequency, and kinetic energy were
+wrong.  In a uniform-$B$ test with initial speed $0.6c$, the old code produced
+speeds between $0.6000c$ and $0.6626c$ even though $E=0$.
+
+\subsection{Corrected update}
+
+The repaired routine performs
+\begin{align}
+  \mathbf{u}^{-} &= \mathbf{u}^{n}
+       +\frac{q\Delta t}{2m}\mathbf{E},\\
+  \gamma^- &= \sqrt{1+|\mathbf{u}^{-}|^2/c^2},\\
+  \mathbf{t} &= \frac{q\Delta t}{2m\gamma^-}\mathbf{B},\\
+  \mathbf{s} &= \frac{2\mathbf{t}}{1+|\mathbf{t}|^2},\\
+  \mathbf{u}' &= \mathbf{u}^{-}+\mathbf{u}^{-}\times\mathbf{t},\\
+  \mathbf{u}^{+} &= \mathbf{u}^{-}+\mathbf{u}'\times\mathbf{s},\\
+  \mathbf{u}^{n+1} &= \mathbf{u}^{+}
+       +\frac{q\Delta t}{2m}\mathbf{E},\\
+  \gamma^{n+1} &= \sqrt{1+|\mathbf{u}^{n+1}|^2/c^2},\\
+  \mathbf{v}^{n+1} &= \mathbf{u}^{n+1}/\gamma^{n+1}.
+\end{align}
+Electron and ion rotation directions follow automatically from their signed
+charge-to-mass ratios.  The repaired uniform-$B$ regression conserves both
+$|\mathbf{u}|$ and speed $0.6c$ to numerical precision over 1000 steps.
+
+\section{Staggered magnetic interpolation}
+
+If $B_j$ is located at $(j+1/2)\Delta x$, a particle at $x_p$ is bracketed by
+\begin{equation}
+  j=\left\lfloor\frac{x_p}{\Delta x}-\frac12\right\rfloor,
+\end{equation}
+and its correct linear weight is
+\begin{equation}
+  w_B=\frac{x_p}{\Delta x}-\left(j+\frac12\right).
+\end{equation}
+The original implementation omitted the $1/2$ in the weight and used
+$x_p/\Delta x-j$.  Its weights therefore lay in $[0.5,1.5)$ instead of
+$[0,1)$, amounting to a half-cell sampling shift in the interior and
+extrapolation near periodic wrapping.  This error altered magnetic forces and
+could exchange spurious energy with particles.
+
+The corrected expressions are implemented for both species in
+\path{grids.py}.  A regression using a linear magnetic field recovers the
+particle coordinate exactly.
+
+\section{Macro-particle normalization}
+
+Originally each simulation particle deposited its literal charge without a
+macro-particle weight or division by $\Delta x$.  Consequently the mean density
+and plasma frequency changed when the number of particles per cell changed.
+This made particle-count convergence physically ill-defined.
+
+The repaired periodic solver introduces a normalized continuum density $n_0$
+in \path{parameters.py}.  For a one-dimensional unit-area domain of length
+$L$, each species uses
+\begin{equation}
+  w_s=\frac{n_0L}{N_s}.
+\end{equation}
+Number density is deposited as
+\begin{equation}
+  n_{s,i}=\frac{w_s}{\Delta x}
+      \sum_{p\in s}S_i(x_p),
+\end{equation}
+and current density carries the corresponding factor
+$q_sw_s/\Delta x$.  Particle acceleration continues to use the physical
+$q_s/m_s$, so changing $N_s$ now changes statistical noise without changing
+the intended continuum density.  A regression with 32 and 128 particles
+verifies that both cases integrate to the same density $n_0=1$.
+
+For the normalized constants $|q_e|=m_e=\epsz=1$,
+\begin{equation}
+  \omega_{pe}=\sqrt{n_0}.
+\end{equation}
+The timestep estimator now includes $n_0$ in its plasma-frequency estimate.
+
+\section{Charge continuity and Gauss's law}
+
+\subsection{Problem in the endpoint-average current}
+
+For consistent longitudinal electromagnetic evolution, the deposited charge
+and current must satisfy the same discrete identity used by Amp\`ere's law:
+\begin{equation}
+  \frac{\rho_i^{n+1}-\rho_i^n}{\Delta t}
+  +\frac{J_{x,i}^{n+1/2}-J_{x,i-1}^{n+1/2}}{\Delta x}=0.
+  \label{eq:continuity}
+\end{equation}
+An average of CIC currents deposited at trajectory endpoints does not satisfy
+Eq.~\eqref{eq:continuity} exactly when a particle changes its supporting grid
+nodes.  Thus it permits longitudinal Gauss error to be generated at every
+step.
+
+\subsection{Periodic 1D continuity-preserving construction}
+
+In one periodic dimension, Eq.~\eqref{eq:continuity} determines $J_x$ up to a
+spatially uniform constant.  Let
+$\Delta\rho_i=\rho_i^{n+1}-\rho_i^n$.  Starting from a provisional
+$J_{x,0}=0$, the implementation constructs
+\begin{equation}
+  J_{x,i}=-\frac{\Delta x}{\Delta t}
+      \sum_{m=1}^{i}\Delta\rho_m,
+  \qquad i=1,\ldots,N_x-1.
+\end{equation}
+Neutrality makes the remaining periodic equation at $i=0$ consistent.  The
+undetermined uniform part is then chosen from the total particle trajectory
+flux,
+\begin{equation}
+  \langle J_x\rangle=rac{1}{L\Delta t}
+       \sum_p q_pw_p\Delta x_p,
+\end{equation}
+where $\Delta x_p$ is the shortest periodic displacement.  This procedure is
+specific to 1D periodic geometry; it should not be presented as a replacement
+for a general multidimensional Esirkepov-type deposition algorithm.
+
+The transverse currents $J_y$ and $J_z$ do not enter the 1D charge-continuity
+divergence.  They are deposited by CIC at the periodic midpoint of each
+particle trajectory, using velocities at the particle half-step.
+
+\subsection{Initial and preserved Gauss constraint}
+
+The 1D3V grid now stores
+\begin{equation}
+  \rho_i=q_en_{e,i}+q_in_{i,i}.
+\end{equation}
+For a periodic neutral domain, the initial longitudinal electric field is
+constructed to satisfy
+\begin{equation}
+  \frac{E_{x,i}-E_{x,i-1}}{\Delta x}=\frac{\rho_i}{\epsz}
+\end{equation}
+to roundoff.  Its spatially uniform, undetermined component is set to zero.
+If the periodic domain has nonzero net charge, initialization raises an error
+because no periodic solution of Gauss's law exists.
+
+Under the longitudinal update
+\begin{equation}
+ E_x^{n+1}=E_x^n-\frac{\Delta t}{\epsz}J_x^{n+1/2},
+\end{equation}
+Eq.~\eqref{eq:continuity} causes discrete Gauss's law to be preserved
+algebraically.  The code records both $L_2$ and $L_\infty$ norms of the
+continuity and Gauss residuals.
+
+\section{Energy accounting and diagnostics}
+
+The original particle diagnostic used the classical expression
+$\tfrac12m|\mathbf{v}|^2$ even for $v=0.9c$.  The periodic electromagnetic path
+now uses the weighted relativistic kinetic energy
+\begin{equation}
+  K_s=\sum_{p\in s}w_sm_sc^2(\gamma_p-1).
+\end{equation}
+The field energy remains
+\begin{equation}
+  U_F=\frac{\Delta x}{2}\sum_i
+  \left(\epsz|\mathbf{E}_i|^2+rac{|\mathbf{B}_i|^2}{\mucz}\right).
+\end{equation}
+
+The results object additionally stores
+\begin{itemize}
+  \item charge density $\rho$;
+  \item Gauss residual $L_2$ and $L_\infty$ norms;
+  \item continuity residual $L_2$ and $L_\infty$ norms;
+  \item longitudinal electric energy;
+  \item transverse electric energy;
+  \item magnetic energy.
+\end{itemize}
+This separation makes it possible to identify whether energy first appears in
+the longitudinal particle coupling or in the transverse Maxwell subsystem.
+
+\section{Boundary conditions}
+
+The old driver accepted open or absorbing particle boundaries but always
+called a periodic field solver.  This silently coupled nonperiodic particles to
+periodically wrapping fields.  In addition, the unused nonperiodic field path
+contained endpoint indexing and zero-locking limiter defects.
+
+The repaired \path{solver_1D3V.py} explicitly accepts only
+\code{BoundaryCondition.Periodic}.  Open and absorbing choices raise
+\code{NotImplementedError}.  This is deliberate: failing clearly is safer than
+returning a plausible-looking but mathematically inconsistent shock result.
+The periodic particle wrapper was also changed so it no longer subtracts a
+small displacement from every particle at every step.
+
+A production open shock calculation still requires
+\begin{enumerate}
+  \item a verified outgoing-wave or perfectly matched electromagnetic layer;
+  \item charge-consistent particle removal and injection;
+  \item synchronized creation and deletion of $x$, $v$, and $u$;
+  \item boundary contributions to the energy and charge budgets;
+  \item reflection and transmission benchmark tests.
+\end{enumerate}
+
+\section{Resolution and normalized parameters}
+
+For normalized $n_0=1$, $|q_e|=m_e=\epsz=c=1$,
+\begin{equation}
+  \omega_{pe}=1,\qquad d_e=\frac{c}{\omega_{pe}}=1,
+  \qquad \lambda_D\simeq\frac{v_{te}}{\omega_{pe}}=v_{te}.
+\end{equation}
+The historical cold setup used $v_{te}=10^{-8}$ and $\Delta x=0.005$, giving
+\begin{equation}
+  \frac{\lambda_D}{\Delta x}=2\times10^{-6}.
+\end{equation}
+This is severely under-resolved.  It can produce finite-grid heating and alias
+instabilities, but it was not the cause of the proven source-free Maxwell
+growth in Section~\ref{sec:maxwell-instability}.
+
+The resolved example uses $N_x=100$, $\Delta x=0.01$, and $v_{te}=0.01$, so
+$\lambda_D/\Delta x\simeq1$.  Its timestep is $\Delta t=5\times10^{-4}$,
+giving
+\begin{equation}
+  \frac{c\Delta t}{\Delta x}=0.05,
+  \qquad \omega_{pe}\Delta t=5\times10^{-4}.
+\end{equation}
+Both conditions are comfortably inside their explicit stability limits.
+
+Using $v_{te}=10^{-8}$ with a unit-length explicit grid would require of order
+$10^8$ cells merely to reach $\Delta x\lesssim\lambda_D$, which is not a
+practical configuration for this Python PIC code.  A cold physical problem
+must therefore use a different normalization, a reduced scale separation, or
+an implicit/semi-implicit method rather than simply restoring the old thermal
+speed.
+
+\section{Verification suite}
+
+The regression suite is located in \path{tests/test_1d3v_core.py}.  Its current
+coverage is summarized in Table~\ref{tab:tests}.
+
+\begin{longtable}{p{0.38\textwidth}p{0.53\textwidth}}
+\caption{Implemented numerical regression tests.}\label{tab:tests}\\
+\toprule
+Test & Acceptance criterion \\
+\midrule
+\endfirsthead
+\toprule
+Test & Acceptance criterion \\
+\midrule
+\endhead
+Vacuum transverse mode & Source-free field energy remains bounded over 2000 steps. \\
+Uniform magnetic field & Relativistic Boris rotation preserves momentum norm and speed. \\
+Staggered magnetic CIC & A linear staggered field interpolates exactly at the particle position. \\
+Velocity-to-momentum conversion & Gamma is computed from total speed rather than per component. \\
+Macro-particle normalization & Changing particle count does not change integrated or mean density. \\
+Continuity and Gauss preservation & A periodic cell-crossing trajectory satisfies both constraints to roundoff. \\
+Electron plasma oscillation & Measured normalized frequency agrees with $\omega_{pe}=1$ within three percent and does not create transverse fields. \\
+\bottomrule
+\end{longtable}
+
+The plasma-oscillation test measured
+\begin{equation}
+  \omega_{pe,\mathrm{measured}}=0.9967,
+\end{equation}
+which is consistent with the normalized target and the finite grid and shape
+factor.
+
+\section{End-to-end periodic example}
+
+The executable example \path{runs/periodic_1d3v.py} exercises the public
+\code{solver\_1D3V.simulate} entry point with 4000 particles, 100 cells,
+$n_0=1$, $v_{te}=0.01$, periodic boundaries, and three velocity components.
+It ran to $t=2.0005$ in 4001 steps and reported
+\begin{align}
+  \max\|G\|_\infty &= 7.36\times10^{-15},\\
+  \max\|C\|_\infty &= 1.47\times10^{-11},\\
+  \max\left|\frac{E_{\mathrm{tot}}(t)-E_{\mathrm{tot}}(0)}
+  {E_{\mathrm{tot}}(0)}\right| &= 3.09\times10^{-3},\\
+  \max U_{\mathrm{transverse}} &\simeq 1.05\times10^{-7},
+\end{align}
+where $G$ is the discrete Gauss residual and $C$ is the discrete continuity
+residual.  These results establish that the repaired periodic code completes a
+coupled particle--field run without the old exponential transverse failure.
+The energy result is a benchmark value, not a proof of exact energy
+conservation for arbitrary nonlinear distributions.
+
+\section{Current supported status}
+
+The following statement is scientifically defensible:
+
+\begin{quote}
+The periodic 1D3V electromagnetic PIC path is numerically functional and has
+passed isolated vacuum, pusher, interpolation, normalization, constraint, and
+plasma-frequency benchmarks.  The previously observed source-free transverse
+exponential instability has been removed.
+\end{quote}
+
+The following stronger statement is not yet justified:
+
+\begin{quote}
+The code is ready for production open-boundary collisionless shock studies at
+the historical cold-plasma parameters.
+\end{quote}
+
+The reasons are that electromagnetic open/absorbing boundaries have not been
+implemented and validated, and the historical Debye length is unresolved by
+many orders of magnitude.
+
+\section{Reproduction instructions}
+
+From the repository root, run the regression suite with
+\begin{lstlisting}[language=bash]
+python -m unittest discover -s tests -v
+\end{lstlisting}
+and the resolved periodic example with
+\begin{lstlisting}[language=bash]
+python runs/periodic_1d3v.py
+\end{lstlisting}
+
+The example disables result-file writing by default while still returning all
+diagnostics in memory.  Normal simulations retain the existing behavior of
+writing results unless \code{write\_results=False} is passed to
+\code{simulate}.
+
+\section{Recommended next work}
+
+Before constructing a shock, the following work should be performed in order:
+\begin{enumerate}
+  \item add longer energy-convergence tests over multiple plasma periods;
+  \item add cold-plasma electromagnetic dispersion and two-stream growth-rate
+        benchmarks;
+  \item vary particles per cell at fixed $n_0$ and verify noise convergence;
+  \item vary $\Delta x$ and $\Delta t$ independently while keeping
+        $\lambda_D/\Delta x$ controlled;
+  \item implement an electromagnetic absorbing boundary and measure its
+        reflection coefficient using incident vacuum waves;
+  \item design charge-consistent particle inflow and outflow and verify global
+        charge and energy budgets;
+  \item only then run a shock and separate physical growth rates from numerical
+        noise through resolution convergence.
+\end{enumerate}
+
+\appendix
+\section{Summary of modified files}
+
+\begin{description}
+  \item[\path{maxwell.py}] Stable Maxwell composition, periodic Gauss solve,
+    Gauss residual, normalized current, midpoint transverse current, and
+    continuity-preserving longitudinal current.
+  \item[\path{newton.py}] Correct scalar relativistic gamma and final velocity
+    conversion in the Boris pusher.
+  \item[\path{grids.py}] Correct half-cell magnetic weights, physical number
+    density, charge density, and constraint arrays for \code{Grid1D3V}.
+  \item[\path{particles.py}] Macro-particle weight, total-speed momentum
+    initialization, speed validation, and relativistic kinetic energy.
+  \item[\path{solver_1D3V.py}] Fixed-density periodic PIC cycle, constraint
+    monitoring, relativistic energy, and explicit boundary support guard.
+  \item[\path{parameters.py}] Normalized continuum density $n_0$.
+  \item[\path{time_constraint.py}] Density-aware plasma-frequency estimate.
+  \item[\path{results.py}] Charge, constraints, and component field energies.
+  \item[\path{boundary_conditions.py}] Periodic wrapping without an artificial
+    per-step particle displacement.
+  \item[\path{tests/test_1d3v_core.py}] Seven numerical regression tests.
+  \item[\path{runs/periodic_1d3v.py}] Resolved end-to-end example.
+  \item[\path{README.md}] Documented validated scope and commands.
+\end{description}
+
+\section{Branch recommendation}
+
+The repairs should be maintained on a separate branch until reviewed and
+compared against the original implementation.  A suitable branch and commit
+sequence is
+\begin{lstlisting}[language=bash]
+git switch -c codex/fix-1d3v-pic-stability
+git add README.md boundary_conditions.py grids.py maxwell.py newton.py \
+  parameters.py particles.py results.py solver_1D3V.py time_constraint.py \
+  runs/periodic_1d3v.py tests docs/1D3V_numerical_audit_and_repairs.tex
+git commit -m "Fix and validate periodic 1D3V PIC solver"
+git push -u origin codex/fix-1d3v-pic-stability
+\end{lstlisting}
+
+\end{document}
