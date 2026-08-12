@@ -1,7 +1,5 @@
 # Collisionless Shock Simulation using Particle-in-Cell (PIC) Method
 
-
-
 ---
 
 ## Overview
