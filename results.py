@@ -165,20 +165,29 @@ class ResultsND(Results):
         self.J.append(grid.J.copy())
         self.B.append(grid.B.copy())
         self.rho.append(grid.rho.copy())
-        self.gauss_l2.append(np.sqrt(grid.dx * np.sum(grid.gauss_residual**2)))
+        volume_element = grid.dx if grid.E.ndim == 2 else grid.dx * grid.dx
+        self.gauss_l2.append(
+            np.sqrt(volume_element * np.sum(grid.gauss_residual**2))
+        )
         self.gauss_linf.append(np.max(np.abs(grid.gauss_residual)))
         self.continuity_l2.append(
-            np.sqrt(grid.dx * np.sum(grid.continuity_residual**2))
+            np.sqrt(volume_element * np.sum(grid.continuity_residual**2))
         )
         self.continuity_linf.append(np.max(np.abs(grid.continuity_residual)))
+        if grid.E.ndim == 2:
+            longitudinal = np.sum(grid.E[:, 0] ** 2)
+            transverse = np.sum(grid.E[:, 1:] ** 2)
+        else:
+            longitudinal = np.sum(grid.E**2)
+            transverse = 0.0
         self.electric_longitudinal_energy.append(
-            0.5 * eps_0 * grid.dx * np.sum(grid.E[:, 0] ** 2)
+            0.5 * eps_0 * volume_element * longitudinal
         )
         self.electric_transverse_energy.append(
-            0.5 * eps_0 * grid.dx * np.sum(grid.E[:, 1:] ** 2)
+            0.5 * eps_0 * volume_element * transverse
         )
         self.magnetic_energy.append(
-            0.5 / mu_0 * grid.dx * np.sum(grid.B**2)
+            0.5 / mu_0 * volume_element * np.sum(grid.B**2)
         )
 
     def write(self, dirname, p: Parameters):

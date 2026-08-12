@@ -8,109 +8,128 @@ from physical_constants import c
 
 
 def advance_positions(particles: Particles, dt):
-    """
-    Perform position update: x^(n+1) = x^n + v^(n+1/2) * dt
-    Works for 1D, 1D3V, 2D, 3D
-    """
-    particles.x += particles.v[:, 0 : particles.dimX] * dt
+    particles.x += particles.v[:, : particles.dimX] * dt
 
 
-def initialize_velocities_half_step_1D(grid: Grid1D, electrons: Particles, ions: Particles, params: Parameters, dt: float, tridiag):
-    """
-    Function to properly initialize velocities for the leapfrog scheme at t-dt/2.
-    """
-    # Calculate initial electric field
+def initialize_velocities_half_step_1D(
+    grid: Grid1D,
+    electrons: Particles,
+    ions: Particles,
+    params: Parameters,
+    dt: float,
+    tridiag,
+):
     maxwell.poisson_solver(grid, electrons, ions, params, tridiag, first=True)
-    # Apply Lorenz force backwards in time to find v^(-1/2)
     lorenz_force_1D(grid, electrons, -dt / 2)
     lorenz_force_1D(grid, ions, -dt / 2)
 
 
 def lorenz_force_1D(grid: Grid1D, particles: Particles, dt):
-    # Get field at particle positions
-    E = grid.E[particles.idx] * (1 - particles.cic_weights) + grid.E[(particles.idx + 1) % grid.n_cells] * particles.cic_weights
-    # Update velocities using 1D Lorenz force formulation
-    particles.v += particles.qm * E * dt
+    electric = (
+        grid.E[particles.idx] * (1 - particles.cic_weights)
+        + grid.E[(particles.idx + 1) % grid.n_cells] * particles.cic_weights
+    )
+    particles.v += particles.qm * electric * dt
 
 
-def initialize_velocities_half_step_1D3V(grid: Grid1D3V, electrons: Particles, ions: Particles, params: Parameters, dt: float):
-    # Apply half a Boris push to find v^(1/2)
+def initialize_velocities_half_step_1D3V(
+    grid: Grid1D3V,
+    electrons: Particles,
+    ions: Particles,
+    params: Parameters,
+    dt: float,
+):
     boris_pusher_1D3V(grid, electrons, dt / 2)
     boris_pusher_1D3V(grid, ions, dt / 2)
 
 
 def boris_pusher_1D3V(grid: Grid1D3V, particles: Particles, dt):
-    # Source: https://arxiv.org/pdf/1710.09164 (prof. Bacchini, Keppens & Lapenta are co-authors :o)
-    # Get field at particle positions
-    E = grid.E[particles.idx.flatten()] * (1 - particles.cic_weights) + grid.E[(particles.idx.flatten() + 1) % grid.n_cells] * particles.cic_weights
-    B = (
-        grid.B[particles.idx_staggered.flatten()] * (1 - particles.cic_weights_staggered)
-        + grid.B[(particles.idx_staggered.flatten() + 1) % grid.n_cells] * particles.cic_weights_staggered
+    electric = (
+        grid.E[particles.idx.flatten()] * (1 - particles.cic_weights)
+        + grid.E[(particles.idx.flatten() + 1) % grid.n_cells]
+        * particles.cic_weights
+    )
+    magnetic = (
+        grid.B[particles.idx_staggered.flatten()]
+        * (1 - particles.cic_weights_staggered)
+        + grid.B[(particles.idx_staggered.flatten() + 1) % grid.n_cells]
+        * particles.cic_weights_staggered
     )
     ct = particles.qm * dt / 2
-    # First half electric impulse: u^n -> u^-.
-    u_minus = particles.u + ct * E
-
-    # Relativistic gamma is one scalar per particle, based on |u^-|.
-    gamma_minus = np.sqrt(1 + np.sum(u_minus**2, axis=1, keepdims=True) / (c * c))
-    beta = ct * B / gamma_minus
-    # einsum really is the fastest: https://stackoverflow.com/a/45006970/15836556
-    beta_sq = np.einsum("ij,ij->i", beta, beta)
-    beta_sq = beta_sq[:, np.newaxis]
-    s = (2 * beta) / (1 + beta_sq)
-    # Calculate v⁻ + (v⁻ + (v⁻ × β)) × s
-    # v_p = v⁻ + (v⁻ × β)
-    u_p = u_minus + np.cross(u_minus, beta)
-    # v⁻ + (v_p) × s
-    u_plus = u_minus + np.cross(u_p, s)
-
-    # Second half electric impulse and conversion back to coordinate velocity.
-    particles.u = u_plus + ct * E
-    gamma_new = np.sqrt(1 + np.sum(particles.u**2, axis=1, keepdims=True) / (c * c))
+    u_minus = particles.u + ct * electric
+    gamma_minus = np.sqrt(
+        1 + np.sum(u_minus**2, axis=1, keepdims=True) / (c * c)
+    )
+    rotation = ct * magnetic / gamma_minus
+    rotation_sq = np.sum(rotation * rotation, axis=1, keepdims=True)
+    scale = 2 * rotation / (1 + rotation_sq)
+    u_prime = u_minus + np.cross(u_minus, rotation)
+    u_plus = u_minus + np.cross(u_prime, scale)
+    particles.u = u_plus + ct * electric
+    gamma_new = np.sqrt(
+        1 + np.sum(particles.u**2, axis=1, keepdims=True) / (c * c)
+    )
     particles.v = particles.u / gamma_new
 
 
-def initialize_velocities_half_step_2D(grid: Grid2D, electrons: Particles, ions: Particles, params: Parameters, dt: float):
-    # Apply Lorenz force backwards in time to find v^(-1/2)
-    boris_pusher_2D(grid, electrons, dt / 2)
-    boris_pusher_2D(grid, ions, dt / 2)
+def initialize_velocities_half_step_2D(
+    grid: Grid2D,
+    electrons: Particles,
+    ions: Particles,
+    params: Parameters,
+    dt: float,
+):
+    boris_pusher_2D2V(grid, electrons, dt / 2)
+    boris_pusher_2D2V(grid, ions, dt / 2)
 
 
-def boris_pusher_2D(grid: Grid2D, particles: Particles, dt):
-    # extra source: https://www.particleincell.com/2011/vxb-rotation/
-    # Create arrays to get adjacent cell coordinates
-    x_adj = np.zeros((particles.N, 2), dtype=int)
-    y_adj = np.zeros((particles.N, 2), dtype=int)
-    x_adj[:, 0] = 1
-    y_adj[:, 1] = 1
-    # Determine arrays for adjacent cell coordinates
-    upper_x = (particles.idx + x_adj) % grid.n_cells
-    upper_y = (particles.idx + y_adj) % grid.n_cells
-    upper_xy = (particles.idx + x_adj + y_adj) % grid.n_cells
-    # Get field at particle positions
-    E = (
-        grid.E[particles.idx[:, 0], particles.idx[:, 1]] * ((1 - particles.cic_weights[:, 0]) * (1 - particles.cic_weights[:, 1]))[:, np.newaxis]
-        + grid.E[upper_x[:, 0], upper_x[:, 1]] * (particles.cic_weights[:, 0] * (1 - particles.cic_weights[:, 1]))[:, np.newaxis]
-        + grid.E[upper_y[:, 0], upper_y[:, 1]] * (particles.cic_weights[:, 1] * (1 - particles.cic_weights[:, 0]))[:, np.newaxis]
-        + grid.E[upper_xy[:, 0], upper_xy[:, 1]] * (particles.cic_weights[:, 1] * particles.cic_weights[:, 0])[:, np.newaxis]
+def _interpolate_2D(field, positions, dx, offset):
+    n_cells = field.shape[0]
+    scaled = positions / dx - np.asarray(offset)
+    idx = np.floor(scaled).astype(np.int32)
+    weight = scaled - idx
+    ix = idx[:, 0] % n_cells
+    iy = idx[:, 1] % n_cells
+    wx = weight[:, 0]
+    wy = weight[:, 1]
+    return (
+        field[ix, iy] * (1 - wx) * (1 - wy)
+        + field[(ix + 1) % n_cells, iy] * wx * (1 - wy)
+        + field[ix, (iy + 1) % n_cells] * (1 - wx) * wy
+        + field[(ix + 1) % n_cells, (iy + 1) % n_cells] * wx * wy
     )
-    B = (
-        grid.B[particles.idx[:, 0], particles.idx[:, 1]] * ((1 - particles.cic_weights[:, 0]) * (1 - particles.cic_weights[:, 1]))[:, np.newaxis]
-        + grid.B[upper_x[:, 0], upper_x[:, 1]] * (particles.cic_weights[:, 0] * (1 - particles.cic_weights[:, 1]))[:, np.newaxis]
-        + grid.B[upper_y[:, 0], upper_y[:, 1]] * (particles.cic_weights[:, 1] * (1 - particles.cic_weights[:, 0]))[:, np.newaxis]
-        + grid.B[upper_xy[:, 0], upper_xy[:, 1]] * (particles.cic_weights[:, 1] * particles.cic_weights[:, 0])[:, np.newaxis]
+
+
+def boris_pusher_2D2V(grid: Grid2D, particles: Particles, dt):
+    """Relativistic 2D2V Boris update for Ex, Ey, and Bz on a Yee grid."""
+    electric = np.column_stack(
+        (
+            _interpolate_2D(grid.E[:, :, 0], particles.x, grid.dx, (0.5, 0.0)),
+            _interpolate_2D(grid.E[:, :, 1], particles.x, grid.dx, (0.0, 0.5)),
+        )
     )
-    # Calculate v⁻ = v_n + 𝜖
-    particles.v += particles.qm * E * dt / 2
+    magnetic = _interpolate_2D(
+        grid.B[:, :, 0], particles.x, grid.dx, (0.5, 0.5)
+    )[:, np.newaxis]
+    ct = particles.qm * dt / 2
+    u_minus = particles.u + ct * electric
+    gamma_minus = np.sqrt(
+        1 + np.sum(u_minus**2, axis=1, keepdims=True) / (c * c)
+    )
+    rotation = ct * magnetic / gamma_minus
+    scale = 2 * rotation / (1 + rotation * rotation)
+    u_prime = u_minus + np.column_stack(
+        (u_minus[:, 1] * rotation[:, 0], -u_minus[:, 0] * rotation[:, 0])
+    )
+    u_plus = u_minus + np.column_stack(
+        (u_prime[:, 1] * scale[:, 0], -u_prime[:, 0] * scale[:, 0])
+    )
+    particles.u = u_plus + ct * electric
+    gamma_new = np.sqrt(
+        1 + np.sum(particles.u**2, axis=1, keepdims=True) / (c * c)
+    )
+    particles.v = particles.u / gamma_new
 
-    beta = particles.qm * B * dt / 2
-    beta_sq = np.sum(beta * beta, axis=1, keepdims=True)
-    s = (2 * beta) / (1 + beta_sq)
-    # Calculate v⁻ + (v⁻ + (v⁻ × β)) × s
-    # v_p = v⁻ + (v⁻ × β)
-    v_p = particles.v + np.concatenate((particles.v[:, 1:] * beta, -particles.v[:, :1] * beta), axis=1)
-    # v = v⁻ + v_p × s
-    particles.v += np.concatenate((v_p[:, 1:] * s, -v_p[:, :1] * s), axis=1)
 
-    # v_n+1 = previous + 𝜖
-    particles.v += particles.qm * E * dt / 2
+# Backward-compatible name for callers outside solver_2D.py.
+boris_pusher_2D = boris_pusher_2D2V

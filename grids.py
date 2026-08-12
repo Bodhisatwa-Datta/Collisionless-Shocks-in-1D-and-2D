@@ -108,75 +108,51 @@ class Grid1D3V:
         self.rho[:] = electrons.q * self.n_e + ions.q * self.n_i
 
 
-# 2 spatial indices, 2/3 components
+# 2 spatial indices and 2 velocity components (TMz electromagnetic system).
 class Grid2D:
-    # We assume that the y-axis is the same size as the x-axis
-    def __init__(self, x_max, dx):
-        self.x_max = x_max
-        self.dx = dx
-        self.x = np.arange(0, x_max, dx)
-        self.y = np.arange(0, x_max, dx)
-        self.n_cells = self.x.size + 1
-        # The fields we consider are Ex, Ey and Bz
-        # External fields:
-        self.E_0 = np.zeros((self.n_cells, self.n_cells, 2))
-        self.B_0 = np.zeros((self.n_cells, self.n_cells, 1))
-        # Total fields
-        self.E = np.zeros((self.n_cells, self.n_cells))
-        # the x component is always calculated directly using the euler solver,
-        # so it has to be added there each timestep
-        # --> as we are choosing to not use the Euler solver for now we have to add the fields here
-        self.E = np.zeros((self.n_cells, self.n_cells, 2)) + self.E_0
-        self.J = np.zeros((self.n_cells, self.n_cells, 2))
-        self.B = np.zeros((self.n_cells, self.n_cells, 1)) + self.B_0
+    """Square periodic Yee grid.
 
-        # Cell averaged-quantities
-        self.n_e = np.empty((self.n_cells, self.n_cells))
-        self.n_i = np.empty((self.n_cells, self.n_cells))
-        self.rho = np.empty((self.n_cells, self.n_cells))
+    rho lives at (i,j), Ex/Jx at (i+1/2,j), Ey/Jy at (i,j+1/2), and
+    Bz at (i+1/2,j+1/2). All arrays contain exactly n_cells periodic samples
+    per direction; there is no duplicated endpoint.
+    """
+
+    def __init__(self, x_max, n_cells):
+        self.x_max = x_max
+        self.n_cells = n_cells
+        self.dx = x_max / n_cells
+        self.x = np.linspace(0, x_max, n_cells, endpoint=False)
+        self.y = np.linspace(0, x_max, n_cells, endpoint=False)
+        self.E = np.zeros((n_cells, n_cells, 2))
+        self.J = np.zeros((n_cells, n_cells, 2))
+        self.B = np.zeros((n_cells, n_cells, 1))
+        self.n_e = np.empty((n_cells, n_cells))
+        self.n_i = np.empty((n_cells, n_cells))
+        self.rho = np.empty((n_cells, n_cells))
+        self.gauss_residual = np.zeros((n_cells, n_cells))
+        self.continuity_residual = np.zeros((n_cells, n_cells))
+
+    def _deposit_scalar(self, target, particles):
+        scaled = particles.x / self.dx
+        np.floor(scaled, out=particles.idx, casting="unsafe")
+        particles.cic_weights = scaled - particles.idx
+        ix = particles.idx[:, 0]
+        iy = particles.idx[:, 1]
+        wx = particles.cic_weights[:, 0]
+        wy = particles.cic_weights[:, 1]
+        scale = particles.weight / (self.dx * self.dx)
+        np.add.at(target, (ix, iy), scale * (1 - wx) * (1 - wy))
+        np.add.at(target, ((ix + 1) % self.n_cells, iy), scale * wx * (1 - wy))
+        np.add.at(target, (ix, (iy + 1) % self.n_cells), scale * (1 - wx) * wy)
+        np.add.at(
+            target,
+            ((ix + 1) % self.n_cells, (iy + 1) % self.n_cells),
+            scale * wx * wy,
+        )
 
     def set_densities(self, electrons: Particles, ions: Particles):
-        """
-        Set the electron density, ion density and charge density on the grid
-        """
-        dummy = electrons.x / self.dx  # Subtract 1/2 * dx making sure that the two chosen cells are the closest after using astype
-        electrons.idx = dummy.astype(int)
-        electrons.cic_weights = dummy - electrons.idx
         self.n_e.fill(0)
-        # TODO: We're assuming periodic BC here, take into account params.bc!
-        # Create array to get the correct index for adjacent points
-        x_adj = np.zeros((electrons.N, 2), dtype=int)
-        y_adj = np.zeros((electrons.N, 2), dtype=int)
-        x_adj[:, 0] = 1
-        y_adj[:, 1] = 1
-        np.add.at(self.n_e, (electrons.idx[:, 0], electrons.idx[:, 1]), (1 - electrons.cic_weights[:, 0]) * (1 - electrons.cic_weights[:, 1]))
-        coords = (electrons.idx + x_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), electrons.cic_weights[:, 0] * (1 - electrons.cic_weights[:, 1]))
-        coords = (electrons.idx + y_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), electrons.cic_weights[:, 1] * (1 - electrons.cic_weights[:, 0]))
-        coords = (electrons.idx + x_adj + y_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), electrons.cic_weights[:, 0] * electrons.cic_weights[:, 1])
-
-        dummy = ions.x / self.dx
-        ions.idx = dummy.astype(int)
-        ions.cic_weights = dummy - ions.idx
         self.n_i.fill(0)
-        # TODO: We're assuming periodic BC here, take into account params.bc!
-        # Create array to get the correct index for adjacent points
-        x_adj = np.zeros((ions.N, 2), dtype=int)
-        y_adj = np.zeros((ions.N, 2), dtype=int)
-        x_adj[:, 0] = 1
-        y_adj[:, 1] = 1
-        np.add.at(self.n_e, (ions.idx[:, 0], ions.idx[:, 1]), (1 - ions.cic_weights[:, 0]) * (1 - ions.cic_weights[:, 1]))
-        coords = (ions.idx + x_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), ions.cic_weights[:, 0] * (1 - ions.cic_weights[:, 1]))
-        coords = (ions.idx + y_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), ions.cic_weights[:, 1] * (1 - ions.cic_weights[:, 0]))
-        coords = (ions.idx + x_adj + y_adj) % self.n_cells
-        np.add.at(self.n_e, (coords[:, 0], coords[:, 1]), ions.cic_weights[:, 0] * ions.cic_weights[:, 1])
-
-        self.rho = electrons.q * self.n_e + ions.q * self.n_i
-        # Remove mean charge, I'm not sure about the physical validity of doing this?
-        # --> is only physically correct for quasi neutrality? so might not hold for open boundary at t!= 0.
-        # Thus we might need to reconsider this for the 1D1V case as wel.
-        self.rho -= np.mean(self.rho)
+        self._deposit_scalar(self.n_e, electrons)
+        self._deposit_scalar(self.n_i, ions)
+        self.rho[:] = electrons.q * self.n_e + ions.q * self.n_i
