@@ -1,12 +1,6 @@
 # Collisionless Shock Simulation using Particle-in-Cell (PIC) Method
 
-### Author
 
-Harikrishnan Aravindakshan, Reda Elassooudi, Simon Desimpelaere, Bodhisatwa Datta, Robbe Alliet
-
-### Last Updated
-
-November 1, 2024
 
 ---
 
