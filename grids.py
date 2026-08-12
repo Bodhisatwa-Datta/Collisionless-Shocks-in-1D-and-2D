@@ -37,7 +37,6 @@ class Grid1D:
         self.n_i.fill(0)
         np.add.at(self.n_i, ions.idx, 1 - ions.cic_weights)
         np.add.at(self.n_i, (ions.idx + 1) % self.n_cells, ions.cic_weights)
-
         self.rho = electrons.q * self.n_e + ions.q * self.n_i
 
 
@@ -62,6 +61,9 @@ class Grid1D3V:
         # Cell averaged-quantities
         self.n_e = np.empty(self.n_cells)
         self.n_i = np.empty(self.n_cells)
+        self.rho = np.empty(self.n_cells)
+        self.gauss_residual = np.zeros(self.n_cells)
+        self.continuity_residual = np.zeros(self.n_cells)
 
     def set_densities(self, electrons: Particles, ions: Particles):
         """
@@ -71,20 +73,39 @@ class Grid1D3V:
         np.floor(dummy, out=electrons.idx, casting="unsafe")
         np.floor(dummy - 0.5, out=electrons.idx_staggered, casting="unsafe")
         electrons.cic_weights = dummy - electrons.idx
-        electrons.cic_weights_staggered = dummy - electrons.idx_staggered
+        # B[j] lives at (j + 1/2) * dx, so measure the CIC distance
+        # from that staggered location rather than from the integer E grid.
+        electrons.cic_weights_staggered = dummy - (electrons.idx_staggered + 0.5)
         self.n_e.fill(0)
-        np.add.at(self.n_e, electrons.idx, 1 - electrons.cic_weights)
+        np.add.at(
+            self.n_e,
+            electrons.idx,
+            electrons.weight / self.dx * (1 - electrons.cic_weights),
+        )
         # TODO: We're assuming periodic BC here, take into account params.bc!
-        np.add.at(self.n_e, (electrons.idx + 1) % self.n_cells, electrons.cic_weights)
+        np.add.at(
+            self.n_e,
+            (electrons.idx + 1) % self.n_cells,
+            electrons.weight / self.dx * electrons.cic_weights,
+        )
 
         dummy = ions.x / self.dx
         np.floor(dummy, out=ions.idx, casting="unsafe")
         np.floor(dummy - 0.5, out=ions.idx_staggered, casting="unsafe")
         ions.cic_weights = dummy - ions.idx
-        ions.cic_weights_staggered = dummy - ions.idx_staggered
+        ions.cic_weights_staggered = dummy - (ions.idx_staggered + 0.5)
         self.n_i.fill(0)
-        np.add.at(self.n_i, ions.idx, 1 - ions.cic_weights)
-        np.add.at(self.n_i, (ions.idx + 1) % self.n_cells, ions.cic_weights)
+        np.add.at(
+            self.n_i,
+            ions.idx,
+            ions.weight / self.dx * (1 - ions.cic_weights),
+        )
+        np.add.at(
+            self.n_i,
+            (ions.idx + 1) % self.n_cells,
+            ions.weight / self.dx * ions.cic_weights,
+        )
+        self.rho[:] = electrons.q * self.n_e + ions.q * self.n_i
 
 
 # 2 spatial indices, 2/3 components

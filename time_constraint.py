@@ -3,7 +3,7 @@ from physical_constants import *
 
 
 # Function that determines the optimal timestep based on the CFL condition and the plasma frequency condition
-def calculate_dt_max(dx, v, qm_e, dimx, safety_factor=5):
+def calculate_dt_max(dx, v, qm_e, dimx, safety_factor=5, number_density=1.0):
     """
     Determine the maximal timestep based on the CFL and plasma frequency conditions:
         - dt < dx / v
@@ -17,8 +17,7 @@ def calculate_dt_max(dx, v, qm_e, dimx, safety_factor=5):
     dt_cfl = dx / (max(v, c) * sqrt(dimx))
 
     # Plasma frequency condition
-    # TODO: likely wrong, w_p = sqrt((n * q^2) / (m * eps)) -> How to find n?
-    wp = sqrt(abs(qm_e))  # Plasma frequency (normalized units)
+    wp = sqrt(number_density * abs(qm_e))
     dt_wp = 2 / wp
 
     # Return the more restrictive timestep divided by the safety factor

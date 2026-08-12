@@ -9,8 +9,6 @@ from grids import Grid1D, Grid1D3V, Grid2D
 from parameters import BoundaryCondition, Parameters
 from particles import Particles
 from physical_constants import *
-from scipy import sparse
-from scipy.sparse import linalg
 
 
 def poisson_solver(grid: Grid1D, electrons: Particles, ions: Particles, params: Parameters, tridiag, first=False):
@@ -57,6 +55,8 @@ def naive_poisson_solver(grid: Grid1D, dx: float):
 
 # Place in maxwell.py
 def thomas_solver(grid: Grid1D, dx: float, tridiag):
+    from scipy.sparse import linalg
+
     dens_phi = linalg.spsolve(tridiag, -dx * dx * grid.rho[1:] / eps_0)
     grid.phi = np.concatenate(([0], dens_phi))
 
@@ -109,18 +109,102 @@ def solve_poisson_sor(u, f, dx, bound_cond, max_iter=100000, tol=1e-4, omega=1.5
 
 
 def calc_curr_dens_1D3V(grid: Grid1D3V, electrons: Particles, ions: Particles):
-    # Current density via CIC for all three velocity components
+    """Deposit an instantaneous CIC current density at particle positions."""
     grid.J.fill(0)
-    np.add.at(grid.J, electrons.idx.flatten(), electrons.v * electrons.q * (1 - electrons.cic_weights))
-    np.add.at(grid.J, (electrons.idx.flatten() + 1) % grid.n_cells, electrons.v * electrons.q * electrons.cic_weights)
-    np.add.at(grid.J, ions.idx.flatten(), ions.v * ions.q * (1 - ions.cic_weights))
-    np.add.at(grid.J, (ions.idx.flatten() + 1) % grid.n_cells, ions.v * ions.q * ions.cic_weights)
+    for particles in (electrons, ions):
+        current = particles.q * particles.weight / grid.dx * particles.v
+        np.add.at(
+            grid.J,
+            particles.idx.flatten(),
+            current * (1 - particles.cic_weights),
+        )
+        np.add.at(
+            grid.J,
+            (particles.idx.flatten() + 1) % grid.n_cells,
+            current * particles.cic_weights,
+        )
+
+
+def initialize_electric_field_1D3V(grid: Grid1D3V):
+    """Initialize periodic Ex so D- Ex = rho/eps_0 to roundoff."""
+    charge_scale = grid.dx * np.sum(np.abs(grid.rho))
+    net_charge = grid.dx * np.sum(grid.rho)
+    tolerance = 1e-12 * max(1.0, charge_scale)
+    if abs(net_charge) > tolerance:
+        raise ValueError(
+            "A periodic 1D3V domain must be charge neutral; "
+            f"integral(rho)={net_charge:.6e}"
+        )
+
+    grid.E[:, 0].fill(0)
+    grid.E[1:, 0] = grid.dx * np.cumsum(grid.rho[1:]) / eps_0
+    # The periodic Gauss solve determines Ex only up to a uniform field.
+    grid.E[:, 0] -= np.mean(grid.E[:, 0])
+    grid.gauss_residual[:] = calc_gauss_residual_1D3V(grid)
+
+
+def calc_gauss_residual_1D3V(grid: Grid1D3V):
+    """Return D- Ex - rho/eps_0 using the solver's periodic derivative."""
+    return (grid.E[:, 0] - np.roll(grid.E[:, 0], 1)) / grid.dx - grid.rho / eps_0
+
+
+def calc_charge_conserving_current_1D3V(
+    grid: Grid1D3V,
+    electrons: Particles,
+    ions: Particles,
+    electron_x_old,
+    ion_x_old,
+    rho_old,
+    dt,
+):
+    """Deposit J^(n+1/2) and enforce periodic discrete continuity.
+
+    Transverse current is CIC-deposited at each trajectory midpoint. In one
+    periodic dimension, continuity determines longitudinal current up to its
+    spatial mean; the mean is set from the particle trajectory flux.
+    """
+    grid.J.fill(0)
+    mean_jx = 0.0
+
+    for particles, x_old in ((electrons, electron_x_old), (ions, ion_x_old)):
+        old = x_old[:, 0]
+        new = particles.x[:, 0]
+        displacement = (new - old + 0.5 * grid.x_max) % grid.x_max - 0.5 * grid.x_max
+        midpoint = (old + 0.5 * displacement) % grid.x_max
+
+        scaled = midpoint / grid.dx
+        idx = np.floor(scaled).astype(np.int32)
+        weight = scaled - idx
+        transverse = particles.q * particles.weight / grid.dx * particles.v[:, 1:]
+        np.add.at(grid.J[:, 1:], idx, transverse * (1 - weight[:, np.newaxis]))
+        np.add.at(
+            grid.J[:, 1:],
+            (idx + 1) % grid.n_cells,
+            transverse * weight[:, np.newaxis],
+        )
+        mean_jx += particles.q * particles.weight * np.sum(displacement) / (
+            dt * grid.x_max
+        )
+
+    delta_rho = grid.rho - rho_old
+    grid.J[0, 0] = 0.0
+    grid.J[1:, 0] = -grid.dx / dt * np.cumsum(delta_rho[1:])
+    grid.J[:, 0] += mean_jx - np.mean(grid.J[:, 0])
+
+    grid.continuity_residual[:] = (
+        delta_rho / dt
+        + (grid.J[:, 0] - np.roll(grid.J[:, 0], 1)) / grid.dx
+    )
 
 
 def calc_fields_1D3V(grid: Grid1D3V, dt):
     """
-    Solve Maxwell's equations on Yee grid **assuming PERIODIC boundary conditions**!!!\n
-    Uses sub-cycling, and limiter on B\n
+    Solve Maxwell's equations on a spatial Yee grid with periodic boundaries.
+
+    E and B are stored at the same integer time after this function returns.
+    A time-centered B/2 -> E -> B/2 (velocity-Verlet) composition is
+    used so that the source-free Maxwell update is stable for c*dt/dx <= 1.
+
     Maxwell's equations for 1D3V become:
 
     * dE_x/dt = -J_x / eps_0\n
@@ -130,45 +214,26 @@ def calc_fields_1D3V(grid: Grid1D3V, dt):
     * dB_y/dt = dE_z/dx\n
     * dB_z/dt = -dE_y/dx\n
     """
-    # To discretize the fields we assume E is known at integer gridpoints while B is known at staggered gridpoints
-    # The grid of B is defined to be the grid of E plus dx/2
-    # The derivatives are then calculated via central difference
-    # Store temp values of fields
-    E = grid.E.copy()
-    dt /= 2
+    half_dt = 0.5 * dt
 
-    # Update E unrestricted for +dt/2
-    grid.E[:, 0] += dt * -grid.J[:, 0] / eps_0
-    grid.E[:, 1] += dt * (-grid.J[:, 1] / eps_0 - c * c / grid.dx * (grid.B[:, 2] - np.roll(grid.B[:, 2], 1)))
-    grid.E[:, 2] += dt * (-grid.J[:, 2] / eps_0 + c * c / grid.dx * (grid.B[:, 1] - np.roll(grid.B[:, 1], 1)))
+    # Faraday: B^n -> B^(n+1/2), using E^n.
+    grid.B[:, 1] += half_dt / grid.dx * (np.roll(grid.E[:, 2], -1) - grid.E[:, 2])
+    grid.B[:, 2] -= half_dt / grid.dx * (np.roll(grid.E[:, 1], -1) - grid.E[:, 1])
 
-    # Update B restricted by limiter for +dt/2
-    ## Calculate update
-    dBy = dt / grid.dx * (np.roll(E[:, 2], -1) - E[:, 2])
-    dBz = -dt / grid.dx * (np.roll(E[:, 1], -1) - E[:, 1])
-    ## Apply limiter
-    # max_change = 0.1  # Maximum allowed relative change
-    # dBy = np.clip(dBy, -max_change * np.abs(grid.B[:, 1]) - 1e-5, max_change * np.abs(grid.B[:, 1]) + 1e-5)
-    # dBz = np.clip(dBz, -max_change * np.abs(grid.B[:, 2]) - 1e-5, max_change * np.abs(grid.B[:, 2]) + 1e-5)
-    ## Apply update
-    grid.B[:, 1] += dBy
-    grid.B[:, 2] += dBz
+    # Ampere-Maxwell: E^n -> E^(n+1), using B^(n+1/2) and J^(n+1/2).
+    grid.E[:, 0] -= dt * grid.J[:, 0] / eps_0
+    grid.E[:, 1] += dt * (
+        -grid.J[:, 1] / eps_0
+        - c * c / grid.dx * (grid.B[:, 2] - np.roll(grid.B[:, 2], 1))
+    )
+    grid.E[:, 2] += dt * (
+        -grid.J[:, 2] / eps_0
+        + c * c / grid.dx * (grid.B[:, 1] - np.roll(grid.B[:, 1], 1))
+    )
 
-    # Remember B at t = n + 1/2 for update to E later
-    B = grid.B.copy()
-
-    # Update B restricted by limiter for +dt/2 (total: +dt)
-    dBy = dt / grid.dx * (np.roll(grid.E[:, 2], -1) - grid.E[:, 2])
-    dBz = -dt / grid.dx * (np.roll(grid.E[:, 1], -1) - grid.E[:, 1])
-    # dBy = np.clip(dBy, -max_change * np.abs(B[:, 1]) - 1e-5, max_change * np.abs(B[:, 1]) + 1e-5)
-    # dBz = np.clip(dBz, -max_change * np.abs(B[:, 2]) - 1e-5, max_change * np.abs(B[:, 2]) + 1e-5)
-    grid.B[:, 1] += dBy
-    grid.B[:, 2] += dBz
-
-    # Update E unrestricted for +dt/2 (total: +dt)
-    grid.E[:, 0] += dt * -grid.J[:, 0] / eps_0
-    grid.E[:, 1] += dt * (-grid.J[:, 1] / eps_0 - c * c / grid.dx * (B[:, 2] - np.roll(B[:, 2], 1)))
-    grid.E[:, 2] += dt * (-grid.J[:, 2] / eps_0 + c * c / grid.dx * (B[:, 1] - np.roll(B[:, 1], 1)))
+    # Faraday: B^(n+1/2) -> B^(n+1), using E^(n+1).
+    grid.B[:, 1] += half_dt / grid.dx * (np.roll(grid.E[:, 2], -1) - grid.E[:, 2])
+    grid.B[:, 2] -= half_dt / grid.dx * (np.roll(grid.E[:, 1], -1) - grid.E[:, 1])
 
 
 def calc_fields_1D3V_nonperiodic(grid: Grid1D3V, dt):

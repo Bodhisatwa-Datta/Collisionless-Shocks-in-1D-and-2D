@@ -2,9 +2,12 @@ import os
 import pickle
 from typing import Union
 
+import numpy as np
+
 import grids
 from parameters import Parameters
 from particles import Particles
+from physical_constants import eps_0, mu_0
 
 
 class Results:
@@ -148,16 +151,51 @@ class ResultsND(Results):
         # ND results store the magnetic field B(x) and current density J(x)
         self.J = []
         self.B = []
+        self.rho = []
+        self.gauss_l2 = []
+        self.gauss_linf = []
+        self.continuity_l2 = []
+        self.continuity_linf = []
+        self.electric_longitudinal_energy = []
+        self.electric_transverse_energy = []
+        self.magnetic_energy = []
 
     def save_fields(self, grid: Union[grids.Grid1D3V, grids.Grid2D]):
         super().save_fields(grid)
         self.J.append(grid.J.copy())
         self.B.append(grid.B.copy())
+        self.rho.append(grid.rho.copy())
+        self.gauss_l2.append(np.sqrt(grid.dx * np.sum(grid.gauss_residual**2)))
+        self.gauss_linf.append(np.max(np.abs(grid.gauss_residual)))
+        self.continuity_l2.append(
+            np.sqrt(grid.dx * np.sum(grid.continuity_residual**2))
+        )
+        self.continuity_linf.append(np.max(np.abs(grid.continuity_residual)))
+        self.electric_longitudinal_energy.append(
+            0.5 * eps_0 * grid.dx * np.sum(grid.E[:, 0] ** 2)
+        )
+        self.electric_transverse_energy.append(
+            0.5 * eps_0 * grid.dx * np.sum(grid.E[:, 1:] ** 2)
+        )
+        self.magnetic_energy.append(
+            0.5 / mu_0 * grid.dx * np.sum(grid.B**2)
+        )
 
     def write(self, dirname, p: Parameters):
         super().write(dirname, p)
 
-        names_dict = {"J": self.J, "B": self.B}
+        names_dict = {
+            "J": self.J,
+            "B": self.B,
+            "rho": self.rho,
+            "gauss_l2": self.gauss_l2,
+            "gauss_linf": self.gauss_linf,
+            "continuity_l2": self.continuity_l2,
+            "continuity_linf": self.continuity_linf,
+            "electric_longitudinal_energy": self.electric_longitudinal_energy,
+            "electric_transverse_energy": self.electric_transverse_energy,
+            "magnetic_energy": self.magnetic_energy,
+        }
 
         for dataname, data in names_dict.items():
             file = os.path.join(dirname, f"{dataname}.pkl")

@@ -1,6 +1,8 @@
 import numpy as np
 import numpy.typing as npt
 
+from physical_constants import c
+
 
 class Particles:
     def __init__(self, num_particles: int, dimX: int, dimV: int, mass: float, charge: float):
@@ -15,6 +17,9 @@ class Particles:
         self.m = mass
         self.q = charge
         self.qm = charge / mass
+        # Number of physical particles represented by one macro-particle.
+        # The 1D3V solver sets this from n0 * domain_length / N_species.
+        self.weight = 1.0
         self.N = num_particles
         self.dimX = dimX
         self.dimV = dimV
@@ -43,6 +48,14 @@ class Particles:
         """
         return 0.5 * self.m * np.sum(self.v**2)
 
+    def relativistic_kinetic_energy(self):
+        """Return sum_p w_p m c^2 (gamma_p - 1)."""
+        gamma = np.sqrt(1 + np.sum(self.u**2, axis=1) / (c * c))
+        return self.weight * self.m * c * c * np.sum(gamma - 1)
+
     def v_to_u(self):
-        gamma = 1 / np.sqrt(1 - self.v**2)
+        speed_sq = np.sum(self.v**2, axis=1, keepdims=True)
+        if np.any(speed_sq >= c * c):
+            raise ValueError("Particle speed must be smaller than the speed of light")
+        gamma = 1 / np.sqrt(1 - speed_sq / (c * c))
         self.u = gamma * self.v

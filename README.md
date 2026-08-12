@@ -100,6 +100,30 @@ The project extends to study fundamental plasma instabilities such as **two-stre
    ```
 4. Use the plotting functions provided to visualize results for electric field, density profiles, phase space, and energy evolution.
 
+### Validated periodic 1D3V path
+
+The electromagnetic 1D3V solver currently supports periodic particle and
+field boundaries. Run its resolved electron-plasma-oscillation example with:
+
+```bash
+python runs/periodic_1d3v.py
+```
+
+The example uses normalized density `n0=1`, three velocity components, and
+`v_the=0.01`, which resolves the Debye length on its 100-cell grid. The solver
+records charge density, Gauss-law and continuity residuals, and separate
+longitudinal-electric, transverse-electric, and magnetic energies.
+
+Run the numerical regression suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Open and absorbing electromagnetic boundaries are deliberately rejected by
+`solver_1D3V` until a field-absorbing boundary and consistent particle
+injection scheme have their own validation tests.
+
 ---
 
 ## Diagnostics and Visualizations

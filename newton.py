@@ -4,6 +4,7 @@ from grids import Grid1D, Grid1D3V, Grid2D
 import maxwell
 from parameters import Parameters
 from particles import Particles
+from physical_constants import c
 
 
 def advance_positions(particles: Particles, dt):
@@ -47,24 +48,26 @@ def boris_pusher_1D3V(grid: Grid1D3V, particles: Particles, dt):
         + grid.B[(particles.idx_staggered.flatten() + 1) % grid.n_cells] * particles.cic_weights_staggered
     )
     ct = particles.qm * dt / 2
-    # Calculate v⁻ = v_n + 𝜖
-    particles.u += ct * E
+    # First half electric impulse: u^n -> u^-.
+    u_minus = particles.u + ct * E
 
-    gamma_inv = 1 / np.sqrt(1 + particles.u**2)
-    beta = ct * B * gamma_inv
+    # Relativistic gamma is one scalar per particle, based on |u^-|.
+    gamma_minus = np.sqrt(1 + np.sum(u_minus**2, axis=1, keepdims=True) / (c * c))
+    beta = ct * B / gamma_minus
     # einsum really is the fastest: https://stackoverflow.com/a/45006970/15836556
     beta_sq = np.einsum("ij,ij->i", beta, beta)
     beta_sq = beta_sq[:, np.newaxis]
     s = (2 * beta) / (1 + beta_sq)
     # Calculate v⁻ + (v⁻ + (v⁻ × β)) × s
     # v_p = v⁻ + (v⁻ × β)
-    u_p = particles.u + np.cross(particles.u, beta)
+    u_p = u_minus + np.cross(u_minus, beta)
     # v⁻ + (v_p) × s
-    particles.u += np.cross(u_p, s)
+    u_plus = u_minus + np.cross(u_p, s)
 
-    # v_n+1 = previous + 𝜖
-    particles.u += ct * E
-    particles.v = particles.u * gamma_inv
+    # Second half electric impulse and conversion back to coordinate velocity.
+    particles.u = u_plus + ct * E
+    gamma_new = np.sqrt(1 + np.sum(particles.u**2, axis=1, keepdims=True) / (c * c))
+    particles.v = particles.u / gamma_new
 
 
 def initialize_velocities_half_step_2D(grid: Grid2D, electrons: Particles, ions: Particles, params: Parameters, dt: float):
