@@ -28,21 +28,24 @@ from runs.reflecting_wall_1d3v import (
 OUTPUT = Path("Results/1D3V_reflecting_wall_plots")
 
 
-def smooth(values, width=9):
+def smooth(values, width=31):
     kernel = np.ones(width) / width
     return np.convolve(np.asarray(values), kernel, mode="same")
 
 
 def detect_front(x, density):
+    """Find the midpoint crossing between downstream and upstream density."""
     profile = smooth(density)
-    gradient = np.gradient(profile, x)
-    candidates = np.flatnonzero((x > 0.5) & (x < 12.0))
-    return int(candidates[np.argmin(gradient[candidates])])
+    n2 = float(np.mean(profile[(x >= 0.4) & (x <= 1.2)]))
+    n1 = float(np.mean(profile[(x >= 8.0) & (x <= 12.0)]))
+    threshold = 0.5 * (n1 + n2)
+    candidates = np.flatnonzero((x > 0.5) & (x < 8.0) & (profile < threshold))
+    return int(candidates[0])
 
 
 def metrics(x, density, index):
-    downstream = (x > max(0.2, x[index] - 1.2)) & (x < x[index] - 0.4)
-    upstream = (x > x[index] + 0.4) & (x < x[index] + 1.2)
+    downstream = (x >= max(0.2, x[index] - 1.2)) & (x <= x[index] - 0.4)
+    upstream = (x >= x[index] + 0.8) & (x <= x[index] + 2.4)
     n2 = float(np.mean(density[downstream]))
     n1 = float(np.mean(density[upstream]))
     return n1, n2, n2 / max(n1, 1e-30)
@@ -66,7 +69,7 @@ def main():
     index = detect_front(x, ni)
     front = float(x[index])
     n1, n2, ratio = metrics(x, ni, index)
-    near_upstream = (ion_x > front) & (ion_x < front + 2.0)
+    near_upstream = (ion_x >= front + 0.8) & (ion_x <= front + 2.4)
     reflected_fraction = float(np.mean(ion_vx[near_upstream] > 0.0))
 
     xmax = min(14.0, LENGTH)
@@ -87,7 +90,7 @@ def main():
         axis.set_xlim(0, xmax)
         axis.grid(alpha=0.18)
     axes[0].annotate(
-        rf"front $x_s={front:.2f}$" + "\n" + rf"$n_2/n_1={ratio:.2f}$",
+        rf"shock front $x_s={front:.2f}$" + "\n" + rf"$n_2/n_1={ratio:.2f}$",
         xy=(front, ni[index]),
         xytext=(front + 1.0, max(ni[(x < xmax)]) * 0.8),
         color="crimson",

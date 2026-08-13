@@ -42,6 +42,8 @@ class WallResults:
     ion_v: list = field(default_factory=list)
     total_energy: list = field(default_factory=list)
     gauss_linf: list = field(default_factory=list)
+    final_electron_x: np.ndarray | None = None
+    final_electron_v: np.ndarray | None = None
 
 
 def initialize_particles(seed=SEED):
@@ -159,6 +161,8 @@ def run():
         electric_kick(ions, ex, dx, 0.5 * DT)
         if step % SAVE_INTERVAL == 0 or step == steps:
             save(step * DT)
+    results.final_electron_x = electrons.x[:, 0].copy()
+    results.final_electron_v = electrons.v.copy()
     return results
 
 
