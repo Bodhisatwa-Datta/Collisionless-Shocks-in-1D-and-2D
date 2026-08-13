@@ -17,18 +17,18 @@ from particles import Particles
 from physical_constants import c, eps_0, m_e, q_e, q_i
 
 
-LENGTH_X = 40.0
-LENGTH_Y = 6.0
-N_X = 128
-N_Y = 24
-PARTICLES_X = 128
-PARTICLES_Y = 48
+LENGTH_X = 20.0
+LENGTH_Y = 4.0
+N_X = 200
+N_Y = 20
+PARTICLES_X = 200
+PARTICLES_Y = 40
 ION_MASS = 100.0
 INFLOW_SPEED = -0.03
 ELECTRON_THERMAL_SPEED = 0.10
 ION_THERMAL_SPEED = 0.002
 DT = 0.01
-T_MAX = 120.0
+T_MAX = 100.0
 SAVE_INTERVAL = 100
 SEED = 41
 
