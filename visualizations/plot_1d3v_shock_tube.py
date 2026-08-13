@@ -91,7 +91,7 @@ def line_panel(parts, x, series, labels, colors, x0, y0, width, height, y_label,
     if front is not None:
         px = xmap(front)
         parts.append(f'<line x1="{px:.2f}" y1="{y0}" x2="{px:.2f}" y2="{y0+height}" stroke="#bd2b2b" stroke-width="2" stroke-dasharray="7 5"/>')
-        parts.append(f'<text x="{px+7:.2f}" y="{y0+18}" font-family="Arial" font-size="12" fill="#9f2020">shock candidate x_s</text>')
+        parts.append(f'<text x="{px+7:.2f}" y="{y0+18}" font-family="Arial" font-size="12" fill="#9f2020">shock front x_s</text>')
     for q in range(5):
         value = x[0] + q * (x[-1] - x[0]) / 4
         parts.append(f'<text x="{xmap(value):.2f}" y="{y0+height+20}" text-anchor="middle" font-family="Arial" font-size="11">{value:.1f}</text>')
@@ -126,7 +126,7 @@ def spacetime(path, results):
     low, high = float(np.min(density)), float(np.max(density))
     width, height = 1080, 630
     left, top, pw, ph = 105, 75, 880, 450
-    parts = svg_header(width, height, "Ion density in space and time", "The propagating compression edge is the shock candidate")
+    parts = svg_header(width, height, "Ion density in space and time", "The propagating high-density edge traces the shock front")
     nt, nx = density.shape
     cw, ch = pw/nx, ph/nt
     for j in range(nt):
