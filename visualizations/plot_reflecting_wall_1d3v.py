@@ -89,13 +89,6 @@ def main():
         axis.axvline(front, color="crimson", ls="--", lw=1.5)
         axis.set_xlim(0, xmax)
         axis.grid(alpha=0.18)
-    axes[0].annotate(
-        rf"shock front $x_s={front:.2f}$" + "\n" + rf"$n_2/n_1={ratio:.2f}$",
-        xy=(front, ni[index]),
-        xytext=(front + 1.0, max(ni[(x < xmax)]) * 0.8),
-        color="crimson",
-        arrowprops={"arrowstyle": "->", "color": "crimson"},
-    )
     fig.suptitle(rf"Reflecting-wall 1D3V, $t\omega_{{pe}}={results.t[-1]:.0f}$", fontsize=14)
     fig.tight_layout()
     save(fig, "shock_diagnostic")
