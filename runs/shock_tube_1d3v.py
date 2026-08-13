@@ -20,13 +20,13 @@ import solver_1D3V
 
 
 X_MAX = 20.0
-N_CELLS = 256
-PARTICLES_PER_SPECIES = 6_144
-ION_MASS = 100.0
-BULK_SPEED = 0.20
-ELECTRON_THERMAL_SPEED = 0.04
-ION_THERMAL_SPEED = 0.008
-T_MAX = 40.0
+N_CELLS = 128
+PARTICLES_PER_SPECIES = 4_096
+ION_MASS = 25.0
+BULK_SPEED = 0.03
+ELECTRON_THERMAL_SPEED = 0.10
+ION_THERMAL_SPEED = 0.002
+T_MAX = 50.0
 SEED = 23
 
 
@@ -67,6 +67,7 @@ def run(write_results=False):
         num_particles=2 * PARTICLES_PER_SPECIES,
         seed=SEED,
         n0=1.0,
+        time_safety_factor=40.0,
     )
     return solver_1D3V.simulate(
         electrons, ions, params, write_results=write_results

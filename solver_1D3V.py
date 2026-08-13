@@ -44,7 +44,7 @@ def simulate(
         max_v,
         electrons.qm,
         electrons.dimX,
-        safety_factor=20,
+        safety_factor=params.time_safety_factor,
         number_density=params.n0,
     )
 

@@ -25,11 +25,14 @@ class Parameters:
     seed: int = 42
     dx: float = 0.0
     n0: float = 1.0
+    time_safety_factor: float = 20.0
 
     def __post_init__(self):
         self.dx = self.x_max / self.n_cells
         if self.n0 <= 0:
             raise ValueError("n0 must be positive")
+        if self.time_safety_factor <= 0:
+            raise ValueError("time_safety_factor must be positive")
 
     def __repr__(self):
         # Generate a string representation with one field per line
