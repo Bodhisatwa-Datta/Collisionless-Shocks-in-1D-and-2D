@@ -146,6 +146,49 @@ def main():
     fig.tight_layout()
     save(fig, "shock_diagnostic")
 
+    # Dedicated spatial-structure figure.  Subtracting the y average in the
+    # second panel removes the dominant 1D compression and exposes variations
+    # along the shock surface.
+    density_variation = ni - np.mean(ni, axis=1, keepdims=True)
+    delta_limit = float(np.percentile(np.abs(density_variation[x <= xmax]), 99))
+    ex_limit = float(np.percentile(np.abs(electric[x <= xmax, :, 0]), 99))
+    ey_limit = float(np.percentile(np.abs(electric[x <= xmax, :, 1]), 99))
+    fig, axes = plt.subplots(2, 2, figsize=(10.0, 6.5), sharex=True, sharey=True)
+    panels = [
+        (ni, "Ion density", "viridis", None, None, r"$n_i/n_0$"),
+        (
+            density_variation,
+            r"Transverse density variation $n_i-\langle n_i\rangle_y$",
+            "RdBu_r",
+            -delta_limit,
+            delta_limit,
+            r"$\delta n_i/n_0$",
+        ),
+        (electric[:, :, 0], r"$E_x(x,y)$", "RdBu_r", -ex_limit, ex_limit, r"$E_x$"),
+        (electric[:, :, 1], r"$E_y(x,y)$", "RdBu_r", -ey_limit, ey_limit, r"$E_y$"),
+    ]
+    for axis, (values, title, cmap, vmin, vmax, label) in zip(axes.flat, panels):
+        image = axis.imshow(
+            values.T,
+            origin="lower",
+            aspect="auto",
+            extent=[0, LENGTH_X, 0, LENGTH_Y],
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        axis.axvline(front, color="crimson", ls="--", lw=1.3)
+        axis.set_xlim(0, xmax)
+        axis.set_title(title)
+        fig.colorbar(image, ax=axis, label=label)
+    axes[0, 0].set_ylabel(r"$y\;(c/\omega_{pe})$")
+    axes[1, 0].set_ylabel(r"$y\;(c/\omega_{pe})$")
+    axes[1, 0].set_xlabel(r"$x\;(c/\omega_{pe})$")
+    axes[1, 1].set_xlabel(r"$x\;(c/\omega_{pe})$")
+    fig.suptitle(rf"2D spatial structure, $t\omega_{{pe}}={times[-1]:.0f}$", fontsize=14)
+    fig.tight_layout()
+    save(fig, "transverse_structure")
+
     density_history = np.asarray([np.mean(value, axis=1) for value in results.n_i])
     fig, axis = plt.subplots(figsize=(8.0, 4.6))
     image = axis.imshow(
