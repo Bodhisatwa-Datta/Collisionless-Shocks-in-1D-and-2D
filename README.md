@@ -74,16 +74,18 @@ python -m runs.convergence_reflecting_wall_2d2v
 
 # Verify an interrupted 1D3V run against an uninterrupted run
 python -m runs.checkpoint_restart_1d3v
+python -m runs.checkpoint_restart_2d2v
 ```
 
 Simulation output is written below `Results/`, which is intentionally ignored by
 Git. The plotting programs in `visualizations/` read those saved results and
 write presentation-ready PNG files.
 
-The reflecting-wall 1D3V run accepts a serializable `WallConfig`. It can stop at
-an intermediate time, write an atomic compressed checkpoint, and resume without
-reinitializing the particles. The checkpoint contains the configuration,
-particle phase space, current step, and saved diagnostic history.
+The reflecting-wall runs accept serializable `WallConfig` and `WallConfig2D`
+objects. They can stop at an intermediate time, write an atomic compressed
+checkpoint, and resume without reinitializing the particles. Each checkpoint
+contains the configuration, particle phase space, current step, and saved
+diagnostic history.
 
 ## Repository map
 

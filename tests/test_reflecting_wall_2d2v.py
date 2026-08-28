@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+import tempfile
 
 import numpy as np
 
@@ -7,8 +9,10 @@ from runs.reflecting_wall_2d2v import (
     LENGTH_Y,
     N_X,
     N_Y,
+    WallConfig2D,
     deposit_density,
     drift_and_bound,
+    run,
     solve_field,
 )
 from pic.particles import Particles
@@ -42,6 +46,42 @@ class ReflectingWall2D2VTests(unittest.TestCase):
         self.assertTrue(np.all((particles.x[:,0] >= 0) & (particles.x[:,0] <= LENGTH_X)))
         self.assertTrue(np.all((particles.x[:,1] >= 0) & (particles.x[:,1] < LENGTH_Y)))
         np.testing.assert_allclose(np.linalg.norm(particles.v, axis=1), before)
+
+    def test_checkpoint_resume_matches_uninterrupted_run(self):
+        config = WallConfig2D(
+            length_x=4.0,
+            length_y=1.0,
+            n_x=16,
+            n_y=8,
+            particles_x=20,
+            particles_y=8,
+            ion_mass=25.0,
+            inflow_speed=-0.03,
+            electron_thermal_speed=0.04,
+            ion_thermal_speed=0.002,
+            dt=0.02,
+            t_max=0.2,
+            save_interval=5,
+            seed=23,
+        )
+        uninterrupted = run(config)
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "wall-2d-state.npz"
+            run(config, stop_time=0.1, checkpoint_path=checkpoint)
+            resumed = run(resume_from=checkpoint)
+
+        np.testing.assert_allclose(resumed.t, uninterrupted.t, rtol=0, atol=0)
+        np.testing.assert_allclose(resumed.n_i, uninterrupted.n_i, rtol=0, atol=0)
+        np.testing.assert_allclose(resumed.electric, uninterrupted.electric, rtol=0, atol=0)
+        np.testing.assert_allclose(
+            resumed.ion_x[-1], uninterrupted.ion_x[-1], rtol=0, atol=0
+        )
+        np.testing.assert_allclose(
+            resumed.ion_v[-1], uninterrupted.ion_v[-1], rtol=0, atol=0
+        )
+        np.testing.assert_allclose(
+            resumed.total_energy, uninterrupted.total_energy, rtol=0, atol=0
+        )
 
 
 if __name__ == "__main__":
