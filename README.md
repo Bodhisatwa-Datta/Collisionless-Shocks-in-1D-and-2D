@@ -1,5 +1,7 @@
 # Collisionless shocks with particle-in-cell simulations
 
+[![DOI](https://zenodo.org/badge/1311073124.svg)](https://doi.org/10.5281/zenodo.22148547)
+
 This repository is my working implementation of electrostatic and electromagnetic
 particle-in-cell (PIC) experiments in one and two spatial dimensions. The main
 scientific target is a collisionless shock formed by reflecting an incoming
