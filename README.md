@@ -71,11 +71,19 @@ python -m runs.reflecting_wall_2d2v
 # Quantitative 1D validation and 2D robustness study
 python -m runs.validate_reflecting_wall_1d3v
 python -m runs.convergence_reflecting_wall_2d2v
+
+# Verify an interrupted 1D3V run against an uninterrupted run
+python -m runs.checkpoint_restart_1d3v
 ```
 
 Simulation output is written below `Results/`, which is intentionally ignored by
 Git. The plotting programs in `visualizations/` read those saved results and
 write presentation-ready PNG files.
+
+The reflecting-wall 1D3V run accepts a serializable `WallConfig`. It can stop at
+an intermediate time, write an atomic compressed checkpoint, and resume without
+reinitializing the particles. The checkpoint contains the configuration,
+particle phase space, current step, and saved diagnostic history.
 
 ## Repository map
 
