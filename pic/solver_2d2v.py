@@ -3,15 +3,13 @@ import time
 
 import numpy as np
 
-import boundary_conditions
-from grids import Grid2D
-import maxwell
-import newton
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import eps_0, mu_0
-from results import ResultsND
-from time_constraint import calculate_dt_max
+from . import boundaries, fields, pushers
+from .config import BoundaryCondition, Parameters
+from .constants import eps_0, mu_0
+from .grids import Grid2D
+from .particles import Particles
+from .results import ResultsND
+from .timestep import calculate_dt_max
 
 
 def simulate(
@@ -47,9 +45,9 @@ def simulate(
     )
 
     grid.set_densities(electrons, ions)
-    maxwell.initialize_electric_field_2D(grid)
-    newton.boris_pusher_2D2V(grid, electrons, dt / 2)
-    newton.boris_pusher_2D2V(grid, ions, dt / 2)
+    fields.initialize_electric_field_2D(grid)
+    pushers.boris_pusher_2D2V(grid, electrons, dt / 2)
+    pushers.boris_pusher_2D2V(grid, ions, dt / 2)
 
     kinetic = (
         electrons.relativistic_kinetic_energy()
@@ -76,11 +74,11 @@ def simulate(
         electron_x_old = electrons.x.copy()
         ion_x_old = ions.x.copy()
 
-        newton.advance_positions(electrons, dt)
-        newton.advance_positions(ions, dt)
-        boundary_conditions.periodic_bc(electrons, ions, params.x_max)
+        pushers.advance_positions(electrons, dt)
+        pushers.advance_positions(ions, dt)
+        boundaries.periodic_bc(electrons, ions, params.x_max)
         grid.set_densities(electrons, ions)
-        maxwell.calc_charge_conserving_current_2D(
+        fields.calc_charge_conserving_current_2D(
             grid,
             electrons,
             ions,
@@ -89,10 +87,10 @@ def simulate(
             rho_old,
             dt,
         )
-        maxwell.calc_fields_2D(grid, dt)
-        grid.gauss_residual[:] = maxwell.calc_gauss_residual_2D(grid)
-        newton.boris_pusher_2D2V(grid, electrons, dt)
-        newton.boris_pusher_2D2V(grid, ions, dt)
+        fields.calc_fields_2D(grid, dt)
+        grid.gauss_residual[:] = fields.calc_gauss_residual_2D(grid)
+        pushers.boris_pusher_2D2V(grid, electrons, dt)
+        pushers.boris_pusher_2D2V(grid, ions, dt)
 
         if step % save_interval == 0:
             kinetic = (

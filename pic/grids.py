@@ -1,6 +1,6 @@
 import numpy as np
 
-from particles import Particles
+from .particles import Particles
 
 
 # 1 spatial index, 1 component
@@ -21,14 +21,14 @@ class Grid1D:
         """
         Set the electron density, ion density and charge density on the grid
         """
-        # NOTE TO SELF (Simon): I'm not fully convinced of how this functionality is split up from the CIC-interpolation, something to look further into...
-        #   Maybe electrons.set_weights(); ions.set_weights(); grid.set_densities(); in main loop?
+        # Density deposition also records the interpolation weights reused by
+        # the particle pusher.
         dummy = electrons.x / self.dx
         np.floor(dummy, out=electrons.idx, casting="unsafe")
         electrons.cic_weights = dummy - electrons.idx
         self.n_e.fill(0)
         np.add.at(self.n_e, electrons.idx, 1 - electrons.cic_weights)
-        # TODO: We're assuming periodic BC here, take into account params.bc!
+        # Grid1D is the legacy periodic electrostatic grid.
         np.add.at(self.n_e, (electrons.idx + 1) % self.n_cells, electrons.cic_weights)
 
         dummy = ions.x / self.dx
@@ -82,7 +82,7 @@ class Grid1D3V:
             electrons.idx,
             electrons.weight / self.dx * (1 - electrons.cic_weights),
         )
-        # TODO: We're assuming periodic BC here, take into account params.bc!
+        # This electromagnetic grid is validated for periodic boundaries.
         np.add.at(
             self.n_e,
             (electrons.idx + 1) % self.n_cells,

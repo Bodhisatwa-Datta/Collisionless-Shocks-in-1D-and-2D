@@ -4,10 +4,10 @@ from typing import Union
 
 import numpy as np
 
-import grids
-from parameters import Parameters
-from particles import Particles
-from physical_constants import eps_0, mu_0
+from . import grids
+from .config import Parameters
+from .constants import eps_0, mu_0
+from .particles import Particles
 
 
 class Results:

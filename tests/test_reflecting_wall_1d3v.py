@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from particles import Particles
+from pic.particles import Particles
 from runs.reflecting_wall_1d3v import (
     LENGTH,
     N_CELLS,

@@ -2,15 +2,15 @@ import unittest
 
 import numpy as np
 
-from grids import Grid1D3V
-from maxwell import (
+from pic.fields import (
     calc_charge_conserving_current_1D3V,
     calc_fields_1D3V,
     calc_gauss_residual_1D3V,
     initialize_electric_field_1D3V,
 )
-from newton import boris_pusher_1D3V
-from particles import Particles
+from pic.grids import Grid1D3V
+from pic.particles import Particles
+from pic.pushers import boris_pusher_1D3V
 
 
 class Maxwell1D3VTests(unittest.TestCase):

@@ -1,13 +1,8 @@
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
-
 import numpy as np
 
-from initial_distributions import two_stream
-from parameters import BoundaryCondition, Parameters
-import solver_1D3V
+from pic import solver_1d3v
+from pic.config import BoundaryCondition, Parameters
+from pic.distributions import two_stream
 
 
 if __name__ == "__main__":
@@ -38,7 +33,7 @@ if __name__ == "__main__":
         n0=1.0,
     )
 
-    results = solver_1D3V.simulate(electrons, ions, params, write_results=False)
+    results = solver_1d3v.simulate(electrons, ions, params, write_results=False)
     print("maximum saved Gauss residual:", max(results.gauss_linf))
     print("maximum saved continuity residual:", max(results.continuity_linf))
     relative_energy_drift = max(

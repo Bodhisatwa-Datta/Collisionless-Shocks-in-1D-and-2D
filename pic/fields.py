@@ -5,24 +5,18 @@
 #   - https://en.wikipedia.org/wiki/Successive_over-relaxation
 import numpy as np
 
-from grids import Grid1D, Grid1D3V, Grid2D
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import *
+from .config import BoundaryCondition, Parameters
+from .constants import c, eps_0
+from .grids import Grid1D, Grid1D3V, Grid2D
+from .particles import Particles
 
 
 def poisson_solver(grid: Grid1D, electrons: Particles, ions: Particles, params: Parameters, tridiag, first=False):
     grid.set_densities(electrons, ions)
 
-    # TODO: commented out the SOR solver so that we can have a result.
-    # It is very very slow since it converges way to slowly.
-    # See bottom of the file for some timing comparisons
-    # Also, another (bigger) issue is that v increases a lot for some reason with the SOR solver,
-    # which makes dt very very small and requires even more iterations
-
-    # If this is the first time we solve the poisson equations,
-    # we need a good initial guess for the iterative SOR solver,
-    # else convergence can't be achieved within a reasonable number of iterations.
+    # The legacy 1D1V path uses direct integration. The SOR implementation
+    # below is retained for comparison but is not the default because its
+    # convergence is too slow for a field solve at every particle step.
     # if first:
     #     naive_poisson_solver(grid, params.dx)
     # solve_poisson_sor(grid.phi, -grid.rho / eps_0, params.dx, params.bc, params.SOR_max_iter, params.SOR_tol, params.SOR_omega)
@@ -46,14 +40,12 @@ def naive_poisson_solver(grid: Grid1D, dx: float):
     ∇∙E = ρ(x)/ε & E(x) = -∇ɸ(x) ⇒ ∆ɸ(x) = -ρ(x)/ε ⇒ d^2ɸ(x)/dx^2 = -ρ(x)/ε ⇒
     ɸ(x) = -1/ε * ∬ρ(x) + C_1*x + C_2
     """
-    # TODO: we should probably determine phi(0) and phi(L) in some way such that we can define C_1 and C_2
-    # However, C_2 can probably be set to zero, as potentials are relative.
-    # It might be possible to use higher order formulas to approximate the double integral?
+    # The additive potential constant is set to zero. Boundary-dependent
+    # integration constants are not reconstructed in this legacy routine.
     grid.phi.fill(0)
     grid.phi[1:] = -1 * np.cumsum(np.cumsum(grid.rho[:-1])) * dx**2 / eps_0
 
 
-# Place in maxwell.py
 def thomas_solver(grid: Grid1D, dx: float, tridiag):
     from scipy.sparse import linalg
 
@@ -61,15 +53,6 @@ def thomas_solver(grid: Grid1D, dx: float, tridiag):
     grid.phi = np.concatenate(([0], dens_phi))
 
 
-# -----------------------------------------------------
-# Comments while trying to fix SOR: It works if you give it enough iterations.
-# The problem with this is that your code gets way too slow.
-# @jit makes it faster. Convergence is never reached within 1,000 iterations
-# no matter which definition of convergence you use (max update / total error norm).
-# Timings for 10,000 iterations are ~ 1s, which would be the cost of one
-# iteration of the main loop => infeasible...
-# -----------------------------------------------------
-# @jit
 def solve_poisson_sor(u, f, dx, bound_cond, max_iter=100000, tol=1e-4, omega=1.5):
     """
     Solve the Poisson equation: ∆u(x) = f(x)
@@ -88,12 +71,11 @@ def solve_poisson_sor(u, f, dx, bound_cond, max_iter=100000, tol=1e-4, omega=1.5
                 u[i] = (1 - omega) * u[i] + (omega / 2) * (u[i + 1] + u[i - 1] - dx**2 * f[i])
                 max_diff = max(max_diff, abs(u[i] - old_u))
 
-            # Open and absorbing boundaries have no explicit formulation for the fields
-            # at the boundaries, so we "make up" boundary conditions by extrapolating u(x)
+            # The legacy open/absorbing path closes the system by quadratic
+            # extrapolation of the potential at each boundary.
             u[0] = 3 * u[1] - 3 * u[2] + u[3]
             u[-1] = 3 * u[-2] - 3 * u[-3] + u[-4]
             if max_diff < tol:
-                print("SOR Converged before maximum iterations!! I AM HAPPY!!")
                 break
     else:  # Periodic boundaries
         for _ in range(max_iter):
@@ -104,7 +86,6 @@ def solve_poisson_sor(u, f, dx, bound_cond, max_iter=100000, tol=1e-4, omega=1.5
                 max_diff = max(max_diff, abs(u[i] - old_u))
             u[-1] = (1 - omega) * u[-1] + (omega / 2) * (u[0] + u[-2] - dx**2 * f[-1])
             if max_diff < tol:
-                print("SOR Converged before maximum iterations!! I AM HAPPY!!")
                 break
 
 
@@ -352,7 +333,7 @@ def calc_curr_dens_2D(grid: Grid1D3V, electrons: Particles, ions: Particles):
     )
     # Current density via CIC for both velocity components
     grid.J.fill(0)
-    # TODO: We're assuming periodic BC here, take into account params.bc!
+    # Current projection here is defined for the periodic electromagnetic path.
     # Create array to get the correct index for adjacent points
     x_adj = np.zeros((electrons.N, 2), dtype=int)
     y_adj = np.zeros((electrons.N, 2), dtype=int)

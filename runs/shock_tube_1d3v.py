@@ -6,17 +6,12 @@ box.  They collide at x=L/2 and move apart at the periodic seam.  This is the
 clean periodic counterpart of the original moving-slab 1D1V experiment.
 """
 
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
-
 import numpy as np
 
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import m_e, q_e, q_i
-import solver_1D3V
+from pic import solver_1d3v
+from pic.config import BoundaryCondition, Parameters
+from pic.constants import m_e, q_e, q_i
+from pic.particles import Particles
 
 
 X_MAX = 20.0
@@ -69,7 +64,7 @@ def run(write_results=False):
         n0=1.0,
         time_safety_factor=40.0,
     )
-    return solver_1D3V.simulate(
+    return solver_1d3v.simulate(
         electrons, ions, params, write_results=write_results
     )
 

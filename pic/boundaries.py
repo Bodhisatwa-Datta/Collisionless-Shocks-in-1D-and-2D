@@ -1,7 +1,7 @@
 # Modify x, v (but possibly also E, B?) based on boundary conditions
 import numpy as np
 
-from particles import Particles
+from .particles import Particles
 
 
 def periodic_bc(electrons: Particles, ions: Particles, x_max: float):
@@ -25,15 +25,13 @@ def _periodic_bc(particles: Particles, x_max: float):
 
 def open_bc(electrons: Particles, ions: Particles, x_max: float, dx: float):
     """
-    Apply open boundary conditions, works for 1D, 2D and 3D :3
+    Apply the legacy open-particle boundary in one or more dimensions.
 
     Remove all particles outside of the domain [0; x_max].
     Also works for 2D and 3D, so domain = [0, x_max[0]] x [0, x_max[1]] (x [0, x_max[2]])
     Insert new particles drawn randomly
-    Maybe an interesting alternative approach?:
-    https://pubs.aip.org/aip/pop/article/15/8/082102/897118/Particle-in-cell-simulation-of-collisionless
-    @Simon, check this:
-    https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2013JA019282
+    Removed particles are replaced by samples from particles still inside the
+    domain. This is not used by the validated electromagnetic solvers.
     """
     _open_bc(electrons, x_max, dx)
     _open_bc(ions, x_max, dx)

@@ -11,7 +11,7 @@ from runs.reflecting_wall_2d2v import (
     drift_and_bound,
     solve_field,
 )
-from particles import Particles
+from pic.particles import Particles
 
 
 class ReflectingWall2D2VTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from physical_constants import c
+from .constants import c
 
 
 class Particles:
@@ -11,7 +11,7 @@ class Particles:
         self.u = np.empty((num_particles, dimV))
         self.idx: npt.NDArray = np.empty((num_particles, dimX), dtype=np.int32)
         self.idx_staggered: npt.NDArray = np.empty((num_particles, dimX), dtype=np.int32)
-        # TODO: add extra dimension to store weights for higher order b-splines?
+        # One linear CIC weight per spatial coordinate.
         self.cic_weights: npt.NDArray = np.empty((num_particles, dimX), dtype=np.float64)
         self.cic_weights_staggered: npt.NDArray = np.empty((num_particles, dimX), dtype=np.float64)
         self.m = mass

@@ -1,7 +1,7 @@
 import numpy as np
 
-from particles import Particles
-from physical_constants import *
+from .constants import m_e, m_i, q_e, q_i, v_te, v_ti
+from .particles import Particles
 
 
 # Initialize particle positions and velocities with a bulk flow
@@ -128,7 +128,7 @@ def bump_on_tail(num_particles: int, x_max: float, v_the: float, v_bump: float, 
 
     electrons.x = np.random.uniform(0, x_max, (num_electrons, 1))
 
-    # TODO: which initial conditions does bump on tail represent?
+    # A small drifting component forms the bump on the Maxwellian tail.
     # XP1 = 0.0001
     # mode = 3
     electrons.x += eps * np.cos(2.0 * np.pi * mode / x_max * electrons.x)

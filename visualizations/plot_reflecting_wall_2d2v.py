@@ -2,11 +2,6 @@
 
 from pathlib import Path
 import os
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
-
 MPL_CACHE = Path("Results/.matplotlib")
 MPL_CACHE.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(MPL_CACHE.resolve()))

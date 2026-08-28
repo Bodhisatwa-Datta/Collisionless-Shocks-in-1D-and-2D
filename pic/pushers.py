@@ -1,10 +1,10 @@
 import numpy as np
 
-from grids import Grid1D, Grid1D3V, Grid2D
-import maxwell
-from parameters import Parameters
-from particles import Particles
-from physical_constants import c
+from . import fields
+from .config import Parameters
+from .constants import c
+from .grids import Grid1D, Grid1D3V, Grid2D
+from .particles import Particles
 
 
 def advance_positions(particles: Particles, dt):
@@ -19,7 +19,7 @@ def initialize_velocities_half_step_1D(
     dt: float,
     tridiag,
 ):
-    maxwell.poisson_solver(grid, electrons, ions, params, tridiag, first=True)
+    fields.poisson_solver(grid, electrons, ions, params, tridiag, first=True)
     lorenz_force_1D(grid, electrons, -dt / 2)
     lorenz_force_1D(grid, ions, -dt / 2)
 

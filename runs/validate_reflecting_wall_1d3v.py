@@ -1,10 +1,5 @@
 """Strict physical validation of the reflecting-wall shock candidate."""
 
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
-
 import numpy as np
 
 from runs.reflecting_wall_1d3v import ION_MASS, run

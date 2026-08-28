@@ -2,17 +2,12 @@
 
 from html import escape
 from pathlib import Path
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
-
 import numpy as np
 
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import m_e, m_i, q_e, q_i
-import solver_2D
+from pic import solver_2d2v
+from pic.config import BoundaryCondition, Parameters
+from pic.constants import m_e, m_i, q_e, q_i
+from pic.particles import Particles
 
 
 OUTPUT = Path("Results/2D2V_plots")
@@ -162,7 +157,7 @@ def main():
         num_particles=electrons.N + ions.N,
         n0=1.0,
     )
-    results = solver_2D.simulate(electrons, ions, params, write_results=False)
+    results = solver_2d2v.simulate(electrons, ions, params, write_results=False)
     final = -1
     heatmap_svg(
         OUTPUT / "fields_and_charge.svg",

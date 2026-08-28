@@ -3,6 +3,8 @@ from enum import Enum
 
 
 class BoundaryCondition(Enum):
+    """Boundary choices retained by the original solver interface."""
+
     Open = 0
     Absorbing = 1
     Periodic = 2
@@ -10,6 +12,8 @@ class BoundaryCondition(Enum):
 
 @dataclass
 class Parameters:
+    """Numerical controls shared by the grid-based solver drivers."""
+
     x_max: float
     n_cells: int
     t_max: float
@@ -28,6 +32,12 @@ class Parameters:
     time_safety_factor: float = 20.0
 
     def __post_init__(self):
+        if self.x_max <= 0:
+            raise ValueError("x_max must be positive")
+        if self.n_cells <= 0:
+            raise ValueError("n_cells must be positive")
+        if self.dimX <= 0 or self.dimV <= 0:
+            raise ValueError("dimX and dimV must be positive")
         self.dx = self.x_max / self.n_cells
         if self.n0 <= 0:
             raise ValueError("n0 must be positive")
@@ -35,7 +45,6 @@ class Parameters:
             raise ValueError("time_safety_factor must be positive")
 
     def __repr__(self):
-        # Generate a string representation with one field per line
         field_strings = [f"{field}: {getattr(self, field)}" for field in self.__dataclass_fields__]
         return f"{self.__class__.__name__}(\n  " + ",\n  ".join(field_strings) + "\n)"
 

@@ -4,11 +4,7 @@ from pathlib import Path
 import csv
 import json
 import os
-import sys
 import time
-
-sys.path.append("./")
-sys.path.append("../")
 
 MPL_CACHE = Path("Results/.matplotlib")
 MPL_CACHE.mkdir(parents=True, exist_ok=True)

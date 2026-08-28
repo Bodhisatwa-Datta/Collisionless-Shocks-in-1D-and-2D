@@ -3,15 +3,13 @@ import time
 
 import numpy as np
 
-import boundary_conditions
-from grids import Grid1D3V
-import maxwell
-import newton
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import eps_0, mu_0
-from results import ResultsND
-from time_constraint import calculate_dt_max
+from . import boundaries, fields, pushers
+from .config import BoundaryCondition, Parameters
+from .constants import eps_0, mu_0
+from .grids import Grid1D3V
+from .particles import Particles
+from .results import ResultsND
+from .timestep import calculate_dt_max
 
 
 def simulate(
@@ -51,8 +49,8 @@ def simulate(
     # At t=0, deposit charge, satisfy periodic Gauss law, then initialize
     # the particle velocity at the leapfrog half step.
     grid.set_densities(electrons, ions)
-    maxwell.initialize_electric_field_1D3V(grid)
-    newton.initialize_velocities_half_step_1D3V(grid, electrons, ions, params, dt)
+    fields.initialize_electric_field_1D3V(grid)
+    pushers.initialize_velocities_half_step_1D3V(grid, electrons, ions, params, dt)
 
     KE = electrons.relativistic_kinetic_energy() + ions.relativistic_kinetic_energy()
     PE = (grid.dx / 2) * (
@@ -79,14 +77,14 @@ def simulate(
         ion_x_old = ions.x.copy()
 
         # Drift x^n -> x^(n+1) with v^(n+1/2).
-        newton.advance_positions(electrons, dt)
-        newton.advance_positions(ions, dt)
-        boundary_conditions.periodic_bc(electrons, ions, params.x_max)
+        pushers.advance_positions(electrons, dt)
+        pushers.advance_positions(ions, dt)
+        boundaries.periodic_bc(electrons, ions, params.x_max)
 
         # Deposit rho^(n+1) and J^(n+1/2). The longitudinal current is
         # constructed to satisfy the periodic discrete continuity equation.
         grid.set_densities(electrons, ions)
-        maxwell.calc_charge_conserving_current_1D3V(
+        fields.calc_charge_conserving_current_1D3V(
             grid,
             electrons,
             ions,
@@ -97,12 +95,12 @@ def simulate(
         )
 
         # Advance E and B together, then monitor the preserved Gauss constraint.
-        maxwell.calc_fields_1D3V(grid, dt)
-        grid.gauss_residual[:] = maxwell.calc_gauss_residual_1D3V(grid)
+        fields.calc_fields_1D3V(grid, dt)
+        grid.gauss_residual[:] = fields.calc_gauss_residual_1D3V(grid)
 
         # Kick v^(n+1/2) -> v^(n+3/2) at x^(n+1).
-        newton.boris_pusher_1D3V(grid, electrons, dt)
-        newton.boris_pusher_1D3V(grid, ions, dt)
+        pushers.boris_pusher_1D3V(grid, electrons, dt)
+        pushers.boris_pusher_1D3V(grid, ions, dt)
 
         if (step + 1) % save_interval == 0:
             KE_prev = (

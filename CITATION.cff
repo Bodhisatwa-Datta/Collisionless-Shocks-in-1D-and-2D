@@ -1,13 +1,8 @@
-# This CITATION.cff file was generated with cffinit.
-# Visit https://bit.ly/cffinit to generate yours today!
-
 cff-version: 1.2.0
-title: >-
-  Introduction to Plasma Dynamics - group project - code
-  repository
+title: Collisionless shocks with particle-in-cell simulations
 message: >-
-  If you use this software, please cite it using the
-  metadata from this file.
+  If you use this software, please cite the repository and identify the commit
+  or release used for your results.
 type: software
 authors:
   - given-names: Simon
@@ -23,5 +18,5 @@ authors:
   - given-names: Maximilien
     family-names: Péters de Bonhomme
 repository-code: >-
-  https://github.com/RedaElassooudi/collisionless-shocks-in-1D-and-2D
+  https://github.com/Bodhisatwa-Datta/Collisionless-Shocks-in-1D-and-2D
 license: Apache-2.0

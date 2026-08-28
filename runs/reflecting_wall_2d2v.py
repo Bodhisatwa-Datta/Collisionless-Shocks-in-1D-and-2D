@@ -6,15 +6,11 @@ condition) and a periodic FFT in the doubled domain.
 """
 
 from dataclasses import dataclass, field
-import sys
-
-sys.path.append("./")
-sys.path.append("../")
 
 import numpy as np
 
-from particles import Particles
-from physical_constants import c, eps_0, m_e, q_e, q_i
+from pic.constants import c, eps_0, m_e, q_e, q_i
+from pic.particles import Particles
 
 
 LENGTH_X = 20.0

@@ -2,15 +2,13 @@ from datetime import datetime
 import time
 import numpy as np
 
-import boundary_conditions
-from grids import Grid1D
-import maxwell
-import newton
-from parameters import BoundaryCondition, Parameters
-from particles import Particles
-from physical_constants import *
-from results import Results1D
-from time_constraint import calculate_dt_max
+from . import boundaries, fields, pushers
+from .config import BoundaryCondition, Parameters
+from .constants import eps_0
+from .grids import Grid1D
+from .particles import Particles
+from .results import Results1D
+from .timestep import calculate_dt_max
 from scipy import sparse
 
 
@@ -36,7 +34,7 @@ def simulate(electrons: Particles, ions: Particles, params: Parameters):
 
     max_v = max(np.max(np.abs(electrons.v)), np.max(np.abs(ions.v)))
     dt = calculate_dt_max(params.dx, max_v, electrons.qm, electrons.dimX, safety_factor=20)
-    newton.initialize_velocities_half_step_1D(grid, electrons, ions, params, dt, tridiag)
+    pushers.initialize_velocities_half_step_1D(grid, electrons, ions, params, dt, tridiag)
 
     # Save data at time = 0
     KE = electrons.kinetic_energy() + ions.kinetic_energy()
@@ -52,7 +50,7 @@ def simulate(electrons: Particles, ions: Particles, params: Parameters):
 
     t = 0  # Time in the simulation
     step = 0  # Number of iterations
-    # TODO: We need a proper definition of unit_time, iterating to t = 1 takes EXTREMELY long (using SOR)
+    # Save roughly one hundred diagnostic frames over the requested duration.
     # => What does it mean to simulate until t = 1?
     while t < params.t_max and step < params.max_iter:
         step += 1
@@ -62,31 +60,31 @@ def simulate(electrons: Particles, ions: Particles, params: Parameters):
         t += dt
 
         # Solve the Poisson equation on the grid and set the values for rho, phi and E
-        maxwell.poisson_solver(grid, electrons, ions, params, tridiag)
+        fields.poisson_solver(grid, electrons, ions, params, tridiag)
 
         # Calculate velocities v^(n+1/2) using Newton's equation
-        newton.lorenz_force_1D(grid, electrons, dt)
-        newton.lorenz_force_1D(grid, ions, dt)
+        pushers.lorenz_force_1D(grid, electrons, dt)
+        pushers.lorenz_force_1D(grid, ions, dt)
 
         # Calculate positions x^(n+1)
         # depending on the boundary condition, the positions have to be updated before or after
         # the boundary conditions have been applied
         if params.bc is BoundaryCondition.Open:
-            newton.advance_positions(electrons, dt)
-            newton.advance_positions(ions, dt)
-            boundary_conditions.open_bc(electrons, ions, params.x_max, params.dx)
+            pushers.advance_positions(electrons, dt)
+            pushers.advance_positions(ions, dt)
+            boundaries.open_bc(electrons, ions, params.x_max, params.dx)
 
         elif params.bc is BoundaryCondition.Periodic:
-            newton.advance_positions(electrons, dt)
-            newton.advance_positions(ions, dt)
-            boundary_conditions.periodic_bc(electrons, ions, params.x_max)
+            pushers.advance_positions(electrons, dt)
+            pushers.advance_positions(ions, dt)
+            boundaries.periodic_bc(electrons, ions, params.x_max)
 
         elif params.bc is BoundaryCondition.Absorbing:
             # Absorbing bc's affect the *velocities* of the particles, so advance positions only
             # after damping of velocities has been calculated
-            boundary_conditions.absorbing_bc_1D(electrons, ions, params.x_max, params.damping_width)
-            newton.advance_positions(electrons, dt)
-            newton.advance_positions(ions, dt)
+            boundaries.absorbing_bc_1D(electrons, ions, params.x_max, params.damping_width)
+            pushers.advance_positions(electrons, dt)
+            pushers.advance_positions(ions, dt)
 
         # Save results every 200 iterations
         if step % 200 == 0:
