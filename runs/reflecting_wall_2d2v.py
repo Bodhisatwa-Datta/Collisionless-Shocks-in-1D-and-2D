@@ -47,9 +47,12 @@ class Results2D2V:
     gauss_linf: list = field(default_factory=list)
     final_electron_x: np.ndarray | None = None
     final_electron_v: np.ndarray | None = None
+    configuration: dict = field(default_factory=dict)
 
 
-def initialize_particles(seed=SEED):
+def initialize_particles(seed=None):
+    if seed is None:
+        seed = SEED
     rng = np.random.default_rng(seed)
     x = (np.arange(PARTICLES_X) + 0.5) * LENGTH_X / PARTICLES_X
     y = (np.arange(PARTICLES_Y) + 0.5) * LENGTH_Y / PARTICLES_Y
@@ -167,40 +170,68 @@ def total_energy(electrons, ions, electric, dx, dy):
     return float(kinetic + field)
 
 
-def run():
-    electrons, ions = initialize_particles()
-    dx = LENGTH_X / N_X
-    dy = LENGTH_Y / N_Y
-    x_grid = (np.arange(N_X) + 0.5) * dx
-    y_grid = (np.arange(N_Y) + 0.5) * dy
-    results = Results2D2V(x_grid=x_grid, y_grid=y_grid)
-    n_e, n_i, _, electric, gauss = solve_field(electrons, ions, dx, dy)
+def run(**overrides):
+    """Run one case, optionally overriding the module's declared parameters.
 
-    def save(time):
-        results.t.append(time)
-        results.n_e.append(n_e.copy())
-        results.n_i.append(n_i.copy())
-        results.electric.append(electric.copy())
-        results.ion_x.append(ions.x.copy())
-        results.ion_v.append(ions.v.copy())
-        results.total_energy.append(total_energy(electrons, ions, electric, dx, dy))
-        results.gauss_linf.append(gauss)
-
-    save(0.0)
-    steps = int(np.ceil(T_MAX / DT))
-    for step in range(1, steps + 1):
-        electric_kick(electrons, electric, dx, dy, 0.5 * DT)
-        electric_kick(ions, electric, dx, dy, 0.5 * DT)
-        drift_and_bound(electrons, DT)
-        drift_and_bound(ions, DT)
+    Keyword names are lowercase versions of the constants above, for example
+    ``run(dt=0.005, particles_y=80, seed=17)``.  Values are restored after the
+    run, so a convergence script can execute independent cases sequentially.
+    """
+    names = {
+        "length_x": "LENGTH_X", "length_y": "LENGTH_Y",
+        "n_x": "N_X", "n_y": "N_Y",
+        "particles_x": "PARTICLES_X", "particles_y": "PARTICLES_Y",
+        "ion_mass": "ION_MASS", "inflow_speed": "INFLOW_SPEED",
+        "electron_thermal_speed": "ELECTRON_THERMAL_SPEED",
+        "ion_thermal_speed": "ION_THERMAL_SPEED", "dt": "DT",
+        "t_max": "T_MAX", "save_interval": "SAVE_INTERVAL", "seed": "SEED",
+    }
+    unknown = set(overrides) - set(names)
+    if unknown:
+        raise TypeError(f"Unknown run override(s): {sorted(unknown)}")
+    old = {constant: globals()[constant] for constant in names.values()}
+    for key, value in overrides.items():
+        globals()[names[key]] = value
+    try:
+        electrons, ions = initialize_particles()
+        dx = LENGTH_X / N_X
+        dy = LENGTH_Y / N_Y
+        x_grid = (np.arange(N_X) + 0.5) * dx
+        y_grid = (np.arange(N_Y) + 0.5) * dy
+        configuration = {key: globals()[constant] for key, constant in names.items()}
+        results = Results2D2V(
+            x_grid=x_grid, y_grid=y_grid, configuration=configuration
+        )
         n_e, n_i, _, electric, gauss = solve_field(electrons, ions, dx, dy)
-        electric_kick(electrons, electric, dx, dy, 0.5 * DT)
-        electric_kick(ions, electric, dx, dy, 0.5 * DT)
-        if step % SAVE_INTERVAL == 0 or step == steps:
-            save(step * DT)
-    results.final_electron_x = electrons.x.copy()
-    results.final_electron_v = electrons.v.copy()
-    return results
+
+        def save(time):
+            results.t.append(time)
+            results.n_e.append(n_e.copy())
+            results.n_i.append(n_i.copy())
+            results.electric.append(electric.copy())
+            results.ion_x.append(ions.x.copy())
+            results.ion_v.append(ions.v.copy())
+            results.total_energy.append(total_energy(electrons, ions, electric, dx, dy))
+            results.gauss_linf.append(gauss)
+
+        save(0.0)
+        steps = int(np.ceil(T_MAX / DT))
+        for step in range(1, steps + 1):
+            electric_kick(electrons, electric, dx, dy, 0.5 * DT)
+            electric_kick(ions, electric, dx, dy, 0.5 * DT)
+            drift_and_bound(electrons, DT)
+            drift_and_bound(ions, DT)
+            n_e, n_i, _, electric, gauss = solve_field(electrons, ions, dx, dy)
+            electric_kick(electrons, electric, dx, dy, 0.5 * DT)
+            electric_kick(ions, electric, dx, dy, 0.5 * DT)
+            if step % SAVE_INTERVAL == 0 or step == steps:
+                save(step * DT)
+        results.final_electron_x = electrons.x.copy()
+        results.final_electron_v = electrons.v.copy()
+        return results
+    finally:
+        for constant, value in old.items():
+            globals()[constant] = value
 
 
 if __name__ == "__main__":
