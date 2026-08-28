@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+
 MPL_CACHE = Path("Results/.matplotlib")
 MPL_CACHE.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(MPL_CACHE.resolve()))
@@ -12,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from pic.diagnostics import analyze_shock, relative_energy_drift
 from runs.reflecting_wall_1d3v import (
     INFLOW_SPEED,
     ION_MASS,
@@ -21,29 +23,6 @@ from runs.reflecting_wall_1d3v import (
 
 
 OUTPUT = Path("Results/1D3V_reflecting_wall_plots")
-
-
-def smooth(values, width=31):
-    kernel = np.ones(width) / width
-    return np.convolve(np.asarray(values), kernel, mode="same")
-
-
-def detect_front(x, density):
-    """Find the midpoint crossing between downstream and upstream density."""
-    profile = smooth(density)
-    n2 = float(np.mean(profile[(x >= 0.4) & (x <= 1.2)]))
-    n1 = float(np.mean(profile[(x >= 8.0) & (x <= 12.0)]))
-    threshold = 0.5 * (n1 + n2)
-    candidates = np.flatnonzero((x > 0.5) & (x < 8.0) & (profile < threshold))
-    return int(candidates[0])
-
-
-def metrics(x, density, index):
-    downstream = (x >= max(0.2, x[index] - 1.2)) & (x <= x[index] - 0.4)
-    upstream = (x >= x[index] + 0.8) & (x <= x[index] + 2.4)
-    n2 = float(np.mean(density[downstream]))
-    n1 = float(np.mean(density[upstream]))
-    return n1, n2, n2 / max(n1, 1e-30)
 
 
 def save(fig, name):
@@ -61,11 +40,22 @@ def main():
     ex = np.asarray(results.ex[-1])
     ion_x = np.asarray(results.ion_x[-1])
     ion_vx = np.asarray(results.ion_v[-1])[:, 0]
-    index = detect_front(x, ni)
-    front = float(x[index])
-    n1, n2, ratio = metrics(x, ni, index)
-    near_upstream = (ion_x >= front + 0.8) & (ion_x <= front + 2.4)
-    reflected_fraction = float(np.mean(ion_vx[near_upstream] > 0.0))
+    shock = analyze_shock(
+        x=x,
+        times=results.t,
+        density_history=results.n_i,
+        ion_position=results.ion_x[-1],
+        ion_velocity=results.ion_v[-1],
+        electron_position=results.final_electron_x,
+        electron_velocity=results.final_electron_v,
+        ion_mass=ION_MASS,
+        front_downstream_window=(0.4, 1.2),
+        front_upstream_window=(8.0, 12.0),
+        front_search_window=(0.5, 8.0),
+        smoothing_width=31,
+    )
+    front = shock.final_front
+    index = int(np.argmin(np.abs(x - front)))
 
     xmax = min(14.0, LENGTH)
     fig, axes = plt.subplots(3, 1, figsize=(8.0, 8.5), sharex=True)
@@ -105,12 +95,11 @@ def main():
     fig.tight_layout()
     save(fig, "shock_spacetime")
 
-    energy = np.asarray(results.total_energy)
-    energy_drift = float(np.max(np.abs((energy-energy[0])/energy[0])))
+    energy_drift = relative_energy_drift(results.total_energy)
     shock_checks = {
-        "compression": ratio > 1.2,
+        "compression": shock.compression_ratio > 1.2,
         "localized_field": abs(ex[index]) > 0.05 * np.max(np.abs(ex)),
-        "reflected_ions": reflected_fraction > 0.01,
+        "reflected_ions": shock.reflected_ion_fraction > 0.01,
         "energy_ok": energy_drift < 0.02,
     }
     confirmed = all(shock_checks.values())
@@ -121,10 +110,10 @@ def main():
         f"inflow_speed_over_c={INFLOW_SPEED:.8e}\n"
         f"final_time={results.t[-1]:.8e}\n"
         f"front_x={front:.8e}\n"
-        f"upstream_density={n1:.8e}\n"
-        f"downstream_density={n2:.8e}\n"
-        f"compression_ratio={ratio:.8e}\n"
-        f"upstream_reflected_ion_fraction={reflected_fraction:.8e}\n"
+        f"upstream_density={shock.upstream_density:.8e}\n"
+        f"downstream_density={shock.downstream_density:.8e}\n"
+        f"compression_ratio={shock.compression_ratio:.8e}\n"
+        f"upstream_reflected_ion_fraction={shock.reflected_ion_fraction:.8e}\n"
         f"max_relative_energy_drift={energy_drift:.8e}\n"
         f"max_gauss_linf={max(results.gauss_linf):.8e}\n"
         + "\n".join(f"check_{key}={value}" for key, value in shock_checks.items())

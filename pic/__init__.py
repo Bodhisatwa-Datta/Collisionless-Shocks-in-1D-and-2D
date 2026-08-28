@@ -6,6 +6,7 @@ old module paths remain available so archived scripts continue to run.
 """
 
 from .config import BoundaryCondition, Parameters
+from .diagnostics import ShockMetrics, analyze_shock
 from .grids import Grid1D, Grid1D3V, Grid2D
 from .particles import Particles
 
@@ -16,4 +17,6 @@ __all__ = [
     "Grid2D",
     "Parameters",
     "Particles",
+    "ShockMetrics",
+    "analyze_shock",
 ]

@@ -16,73 +16,35 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from pic.diagnostics import analyze_shock, relative_energy_drift
 from runs.reflecting_wall_2d2v import run
 
 
 OUTPUT = Path("Results/2D2V_convergence")
 
 
-def smooth(values, width=21):
-    width = min(width, len(values) // 2 * 2 - 1)
-    return np.convolve(values, np.ones(width) / width, mode="same")
-
-
-def front_position(x, density):
-    profile = smooth(np.mean(density, axis=1))
-    downstream = (x >= 0.4) & (x <= 1.2)
-    upstream = (x >= 7.0) & (x <= 10.0)
-    n2 = float(np.mean(profile[downstream]))
-    n1 = float(np.mean(profile[upstream]))
-    if n2 < 1.1 * n1:
-        return np.nan
-    threshold = 0.5 * (n1 + n2)
-    candidates = np.flatnonzero((x > 0.5) & (x < 7.0) & (profile < threshold))
-    return float(x[candidates[0]]) if len(candidates) else np.nan
-
-
-def moments(position, velocity, limits, mass):
-    mask = (position[:, 0] >= limits[0]) & (position[:, 0] <= limits[1])
-    vx = velocity[mask, 0]
-    return float(np.mean(vx)), float(mass * np.var(vx)), mask
-
-
 def analyze(name, results, runtime):
     config = results.configuration
-    x = results.x_grid
     times = np.asarray(results.t)
-    fronts = np.asarray([front_position(x, value) for value in results.n_i])
-    fit = np.isfinite(fronts) & (times >= 0.4 * times[-1])
-    if np.count_nonzero(fit) < 4:
-        raise RuntimeError(f"{name}: not enough valid front positions")
-    speed, intercept = np.polyfit(times[fit], fronts[fit], 1)
-    predicted = speed * times[fit] + intercept
-    ss_res = np.sum((fronts[fit] - predicted) ** 2)
-    ss_tot = np.sum((fronts[fit] - np.mean(fronts[fit])) ** 2)
-    r2 = 1.0 - ss_res / max(ss_tot, 1e-30)
-    front = float(fronts[-1])
-    downstream = (max(0.2, front - 1.2), front - 0.4)
-    upstream = (front + 0.8, front + 2.4)
+    metrics = analyze_shock(
+        x=results.x_grid,
+        times=times,
+        density_history=results.n_i,
+        ion_position=results.ion_x[-1],
+        ion_velocity=results.ion_v[-1],
+        electron_position=results.final_electron_x,
+        electron_velocity=results.final_electron_v,
+        ion_mass=config["ion_mass"],
+        front_downstream_window=(0.4, 1.2),
+        front_upstream_window=(7.0, 10.0),
+        front_search_window=(0.5, 7.0),
+        smoothing_width=21,
+    )
+    energy_drift = relative_energy_drift(results.total_energy)
 
+    x = results.x_grid
     ni = np.asarray(results.n_i[-1])
-    profile = np.mean(ni, axis=1)
-    n2 = float(np.mean(profile[(x >= downstream[0]) & (x <= downstream[1])]))
-    n1 = float(np.mean(profile[(x >= upstream[0]) & (x <= upstream[1])]))
-    compression = n2 / n1
-    ion_x = np.asarray(results.ion_x[-1])
-    ion_v = np.asarray(results.ion_v[-1])
-    electron_x = np.asarray(results.final_electron_x)
-    electron_v = np.asarray(results.final_electron_v)
-    vi2, ti2, _ = moments(ion_x, ion_v, downstream, config["ion_mass"])
-    vi1, ti1, ion_up = moments(ion_x, ion_v, upstream, config["ion_mass"])
-    _, te2, _ = moments(electron_x, electron_v, downstream, 1.0)
-    _, te1, _ = moments(electron_x, electron_v, upstream, 1.0)
-    u1, u2 = vi1 - speed, vi2 - speed
-    cs1 = np.sqrt(max(te1 + 3 * ti1, 0.0) / config["ion_mass"])
-    cs2 = np.sqrt(max(te2 + 3 * ti2, 0.0) / config["ion_mass"])
-    flux_error = abs(n1*u1 - n2*u2) / max(abs(n1*u1), abs(n2*u2), 1e-30)
-    energy = np.asarray(results.total_energy)
-    energy_drift = float(np.max(np.abs((energy-energy[0])/energy[0])))
-
+    front = metrics.final_front
     shock_region = (x >= max(0.2, front - 1.5)) & (x <= front + 1.5)
     fluctuation = ni - np.mean(ni, axis=1, keepdims=True)
     transverse_rms = float(
@@ -99,14 +61,14 @@ def analyze(name, results, runtime):
         "mass_ratio": config["ion_mass"],
         "final_time": times[-1],
         "front_x": front,
-        "shock_speed": float(speed),
-        "trajectory_r2": float(r2),
-        "compression": compression,
-        "upstream_mach": abs(u1) / max(cs1, 1e-30),
-        "downstream_mach": abs(u2) / max(cs2, 1e-30),
-        "flux_mismatch": float(flux_error),
-        "ion_heating": ti2 / max(ti1, 1e-30),
-        "reflected_fraction": float(np.mean(ion_v[ion_up, 0] > 0.0)),
+        "shock_speed": metrics.front_fit.speed,
+        "trajectory_r2": metrics.front_fit.r_squared,
+        "compression": metrics.compression_ratio,
+        "upstream_mach": metrics.upstream_mach,
+        "downstream_mach": metrics.downstream_mach,
+        "flux_mismatch": metrics.mass_flux_mismatch,
+        "ion_heating": metrics.ion_temperature_ratio,
+        "reflected_fraction": metrics.reflected_ion_fraction,
         "energy_drift": energy_drift,
         "gauss_linf": float(max(results.gauss_linf)),
         "transverse_rms": transverse_rms,
