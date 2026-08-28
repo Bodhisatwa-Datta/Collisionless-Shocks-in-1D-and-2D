@@ -82,6 +82,18 @@ class ReflectingWall2D2VTests(unittest.TestCase):
         np.testing.assert_allclose(
             resumed.total_energy, uninterrupted.total_energy, rtol=0, atol=0
         )
+        np.testing.assert_allclose(
+            resumed.electron_kinetic_energy,
+            uninterrupted.electron_kinetic_energy,
+            rtol=0,
+            atol=0,
+        )
+        component_sum = (
+            np.asarray(uninterrupted.electron_kinetic_energy)
+            + np.asarray(uninterrupted.ion_kinetic_energy)
+            + np.asarray(uninterrupted.field_energy)
+        )
+        np.testing.assert_allclose(component_sum, uninterrupted.total_energy, rtol=1e-15)
 
 
 if __name__ == "__main__":

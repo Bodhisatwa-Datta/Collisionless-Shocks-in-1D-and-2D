@@ -92,6 +92,9 @@ class Results2D2V:
     electric: list = field(default_factory=list)
     ion_x: list = field(default_factory=list)
     ion_v: list = field(default_factory=list)
+    electron_kinetic_energy: list = field(default_factory=list)
+    ion_kinetic_energy: list = field(default_factory=list)
+    field_energy: list = field(default_factory=list)
     total_energy: list = field(default_factory=list)
     gauss_linf: list = field(default_factory=list)
     final_electron_x: np.ndarray | None = None
@@ -217,10 +220,17 @@ def drift_and_bound(particles, dt, length_x=LENGTH_X, length_y=LENGTH_Y):
     particles.v[:] = particles.u / gamma[:, None]
 
 
+def energy_components(electrons, ions, electric, dx, dy):
+    """Return electron, ion, field, and total energy in normalized units."""
+
+    electron = float(electrons.relativistic_kinetic_energy())
+    ion = float(ions.relativistic_kinetic_energy())
+    field = float(0.5 * eps_0 * dx * dy * np.sum(electric**2))
+    return electron, ion, field, electron + ion + field
+
+
 def total_energy(electrons, ions, electric, dx, dy):
-    kinetic = electrons.relativistic_kinetic_energy() + ions.relativistic_kinetic_energy()
-    field = 0.5 * eps_0 * dx * dy * np.sum(electric**2)
-    return float(kinetic + field)
+    return energy_components(electrons, ions, electric, dx, dy)[-1]
 
 
 def _particle_from_state(x, u, mass, charge, weight):
@@ -254,6 +264,9 @@ def _write_run_checkpoint(path, config, step, electrons, ions, results):
             "electric": np.asarray(results.electric),
             "ion_x_history": np.asarray(results.ion_x),
             "ion_v_history": np.asarray(results.ion_v),
+            "electron_kinetic_energy": np.asarray(results.electron_kinetic_energy),
+            "ion_kinetic_energy": np.asarray(results.ion_kinetic_energy),
+            "field_energy": np.asarray(results.field_energy),
             "total_energy": np.asarray(results.total_energy),
             "gauss_linf": np.asarray(results.gauss_linf),
         },
@@ -280,6 +293,15 @@ def _read_run_checkpoint(path):
         electric=list(arrays["electric"]),
         ion_x=list(arrays["ion_x_history"]),
         ion_v=list(arrays["ion_v_history"]),
+        electron_kinetic_energy=list(
+            arrays.get("electron_kinetic_energy", np.full(len(arrays["times"]), np.nan))
+        ),
+        ion_kinetic_energy=list(
+            arrays.get("ion_kinetic_energy", np.full(len(arrays["times"]), np.nan))
+        ),
+        field_energy=list(
+            arrays.get("field_energy", np.full(len(arrays["times"]), np.nan))
+        ),
         total_energy=list(arrays["total_energy"]),
         gauss_linf=list(arrays["gauss_linf"]),
         configuration=asdict(config),
@@ -330,9 +352,13 @@ def run(config=None, *, stop_time=None, checkpoint_path=None, resume_from=None, 
         results.electric.append(electric.copy())
         results.ion_x.append(ions.x.copy())
         results.ion_v.append(ions.v.copy())
-        results.total_energy.append(
-            total_energy(electrons, ions, electric, config.dx, config.dy)
+        electron_energy, ion_energy, electric_energy, total = energy_components(
+            electrons, ions, electric, config.dx, config.dy
         )
+        results.electron_kinetic_energy.append(electron_energy)
+        results.ion_kinetic_energy.append(ion_energy)
+        results.field_energy.append(electric_energy)
+        results.total_energy.append(total)
         results.gauss_linf.append(gauss)
 
     if start_step == 0 and not results.t:

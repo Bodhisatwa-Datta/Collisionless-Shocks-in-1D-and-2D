@@ -75,6 +75,7 @@ python -m runs.convergence_reflecting_wall_2d2v
 # Verify an interrupted 1D3V run against an uninterrupted run
 python -m runs.checkpoint_restart_1d3v
 python -m runs.checkpoint_restart_2d2v
+python -m runs.energy_budget_reflecting_walls
 ```
 
 Simulation output is written below `Results/`, which is intentionally ignored by
@@ -86,6 +87,11 @@ objects. They can stop at an intermediate time, write an atomic compressed
 checkpoint, and resume without reinitializing the particles. Each checkpoint
 contains the configuration, particle phase space, current step, and saved
 diagnostic history.
+
+Both reflecting-wall result objects also store electron kinetic, ion kinetic,
+electric-field, and total energy separately. This makes energy exchange visible
+while retaining a direct numerical check that the components close to the
+reported total.
 
 ## Repository map
 
