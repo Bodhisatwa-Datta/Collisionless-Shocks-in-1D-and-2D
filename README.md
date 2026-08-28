@@ -100,7 +100,7 @@ longer domains, and several random seeds.
 ## Project history
 
 This work started from a group plasma-dynamics project and was subsequently
-debugged, extended, and reorganized for my master's research. The exact code used
+debugged, extended, and reorganized for my independent research. The exact code used
 for the original report is preserved in the `Original_Report_Code` branch. The
 `main` branch is the maintained research version. See
 [`docs/project-history.md`](docs/project-history.md) for the authorship and branch
